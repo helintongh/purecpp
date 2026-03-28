@@ -62,7 +62,7 @@ function(copy_html_resources target_name)
 endfunction()
 
 # 为 purecpp 目标调用复制函数
-# copy_html_resources(purecpp)
+copy_html_resources(purecpp)
 
 # 在配置阶段显示详细信息
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")

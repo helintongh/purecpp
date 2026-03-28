@@ -223,24 +223,26 @@
             </div>
             <div class="comments-section"
                  style="margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-                <h2>评论 (<span x-text="article.comments_count"></span>)</h2>
+                <h2 x-text="(isQA ? '回答' : '评论') + ' (' + article.comments_count + ')'">评论</h2>
 
-                <!-- 评论表单 -->
+                <!-- 评论/回答表单 -->
                 <div class="comment-form" x-show="currentUser"
                      style="margin-bottom: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px;">
-                    <h3>发表评论</h3>
+                    <h3 x-text="isQA ? '写下你的回答' : '发表评论'">发表评论</h3>
                     <div style="position: relative; margin-bottom: 1rem;">
-                        <textarea x-model="newCommentContent" rows="4" placeholder="写下你的评论..."
+                        <textarea id="comment-editor" x-model="newCommentContent" rows="4"
+                                  :placeholder="isQA ? '用 Markdown 撰写回答...' : '写下你的评论...'"
                                   style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px;"></textarea>
-                        <div class="emoji-picker" id="emoji-picker"></div>
-                        <button class="action-button" id="emoji-btn" title="表情"
+                        <div class="emoji-picker" id="emoji-picker" x-show="!isQA"></div>
+                        <button class="action-button" id="emoji-btn" title="表情" x-show="!isQA"
                                 style="position: absolute; bottom: 0.5rem; right: 0.5rem; background: none; border: none; font-size: 1.2rem; cursor: pointer;">
                             😊
                         </button>
                     </div>
                     <div style="display: flex; justify-content: flex-end;">
                         <button @click="submitComment" :disabled="!newCommentContent.trim()"
-                                style="padding: 0.5rem 1rem; background-color: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                style="padding: 0.5rem 1rem; background-color: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer;"
+                                x-text="isQA ? '提交回答' : '提交评论'">
                             提交评论
                         </button>
                     </div>
@@ -249,7 +251,7 @@
                 <!-- 未登录提示 -->
                 <div x-show="!currentUser"
                      style="margin-bottom: 2rem; padding: 1rem; background-color: #f8f9fa; border-radius: 8px;">
-                    <p>请<a href="/login.html">登录</a>后发表评论</p>
+                    <p>请<a href="/login.html">登录</a>后<span x-text="isQA ? '回答问题' : '发表评论'"></span></p>
                 </div>
 
                 <!-- 评论列表 -->
@@ -265,7 +267,7 @@
                                       x-text="comment.author_name"></span>
                             </div>
                             <div class="comment-content" style="margin-bottom: 0.5rem; line-height: 1.5;"
-                                 x-html="comment.content"></div>
+                                 x-html="isQA ? marked.parse(comment.content || '') : comment.content"></div>
                             <div class="comment-footer"
                                  style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                                 <div style="display: flex; gap: 1rem; font-size: 0.8rem; color: var(--muted-color);">
@@ -320,7 +322,7 @@
 
                                         <div class="comment-content"
                                              style="margin-bottom: 0.3rem; line-height: 1.4; font-size: 0.9rem;"
-                                             x-html="child.content"></div>
+                                             x-html="isQA ? marked.parse(child.content || '') : child.content"></div>
 
                                         <div class="comment-footer"
                                              style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
@@ -367,10 +369,10 @@
                         </div>
                     </template>
 
-                    <!-- 暂无评论 -->
+                    <!-- 暂无评论/回答 -->
                     <div x-show="comments.length === 0"
                          style="text-align: center; padding: 2rem; color: var(--muted-color);">
-                        <p>暂无评论，快来发表第一条评论吧！</p>
+                        <p x-text="isQA ? '暂无回答，快来第一个回答吧！' : '暂无评论，快来发表第一条评论吧！'"></p>
                     </div>
                 </div>
             </div>
@@ -548,6 +550,8 @@
             document.addEventListener('alpine:init', initUserProfileHover);
         })();
 
+        const QA_TAG_ID = 163;
+
         function articleDetailComponent() {
             return {
                 article: {},
@@ -555,10 +559,12 @@
                 errorMessage: '',
                 currentUser: null,
                 isEditing: false,
+                isQA: false,
                 tags: [],
                 selectedTagIds: [],
                 open: false,
                 simplemde: null,
+                commentSimplemde: null,
                 slug: '',
                 title: '',
                 excerpt: '',
@@ -721,14 +727,22 @@
                     this.currentUser = apiService.getUserInfo();
 
                     try {
-                        // 使用apiService获取文章信息
                         const response = await apiService.getArticle(slug);
                         this.article = response.data;
+
+                        // 检测是否为问答文章
+                        this.isQA = this.article.tag_ids &&
+                            this.article.tag_ids.split('|').includes(String(QA_TAG_ID));
 
                         this.renderMarkdown(this.article.content);
 
                         // 加载评论
                         await this.fetchComments();
+
+                        // 问答模式：为评论框初始化 SimpleMDE
+                        if (this.isQA) {
+                            this.$nextTick(() => { this.initCommentSimpleMDE(); });
+                        }
 
                         this.isLoading = false;
                     } catch (e) {
@@ -824,25 +838,34 @@
 
                 initializeSimpleMDE() {
                     if (this.simplemde) return;
-                    // --- 实例化 SimpleMDE ---
                     this.simplemde = new SimpleMDE({
                         element: document.getElementById("markdown-editor"),
                         spellChecker: false,
-
-                        // 覆盖默认的预览渲染函数
-                        previewRender: function (plainText, preview) {
+                        previewRender: function (plainText) {
                             return marked.parse(plainText);
                         },
                     });
-
-                    // 监听编辑器的 change 事件，同步数据到 Alpine 的 content 变量
                     this.simplemde.codemirror.on("change", () => {
                         this.content = this.simplemde.value();
                     });
-
-                    // 监听粘贴事件
                     this.simplemde.codemirror.on("paste", (cm, event) => {
                         this.handlePaste(event);
+                    });
+                },
+
+                initCommentSimpleMDE() {
+                    if (this.commentSimplemde) return;
+                    const el = document.getElementById("comment-editor");
+                    if (!el) return;
+                    this.commentSimplemde = new SimpleMDE({
+                        element: el,
+                        spellChecker: false,
+                        previewRender: function (plainText) {
+                            return marked.parse(plainText);
+                        },
+                    });
+                    this.commentSimplemde.codemirror.on("change", () => {
+                        this.newCommentContent = this.commentSimplemde.value();
                     });
                 },
 
@@ -951,11 +974,9 @@
                         );
 
                         if (response.success && response.data) {
-                            // 添加到评论列表
                             this.comments.push(response.data);
-                            // 清空输入框
                             this.newCommentContent = '';
-                            // 更新评论计数
+                            if (this.commentSimplemde) this.commentSimplemde.value('');
                             this.article.comments_count++;
                         }
                     } catch (error) {

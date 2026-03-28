@@ -33,14 +33,16 @@
         <div class="content-list" x-data="articleComponent()">
             <div class="page-header-area">
                 <div class="title-and-button">
-                    <h5 class="page-title">技术文章</h5>
+                    <h5 class="page-title" x-text="isQA ? '问答' : isAlgo ? '趣味算法题' : '技术文章'">技术文章</h5>
 
-                    <a href="/new-article.html" x-show="currentUser" id="create-article-btn" role="button">
-                        <i class="fas fa-plus-circle"></i> 撰写新文章
+                    <a :href="isQA ? '/new-article.html?mode=qa' : '/new-article.html'"
+                       x-show="currentUser && !isAlgo" id="create-article-btn" role="button">
+                        <i class="fas fa-plus-circle"></i>
+                        <span x-text="isQA ? '提出问题' : '撰写新文章'"></span>
                     </a>
                 </div>
 
-                <p class="page-description">分享现代C++、系统编程、性能优化等前沿技术</p>
+                <p class="page-description" x-text="isQA ? '遇到技术难题？在这里提问，获得社区专家的解答' : isAlgo ? '每周一道算法题，欢迎积极答题，月冠军有奖！' : '分享现代C++、系统编程、性能优化等前沿技术'"></p>
 
                 <!-- 搜索框 -->
                 <div class="search-box">
@@ -155,6 +157,8 @@
                 tags: [],
                 searchKeyword: '',
                 initialized: false,
+                isQA: false,
+                isAlgo: false,
 
                 // 初始化
                 async init() {
@@ -180,6 +184,8 @@
                             tag = tagObj.name;
                         }
                     }
+                    this.isQA = tagId === 163;
+                    this.isAlgo = tagId === 162;
 
                     this.fetchArticles(page, tag, userId, search);
                     this.initialized = true;

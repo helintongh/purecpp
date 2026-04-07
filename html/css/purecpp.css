@@ -587,6 +587,12 @@ nav .contrast:hover {
     line-height: 0.8 !important;
 }
 
+/* Markdown 编辑器字体大小（与文章查看页面保持一致） */
+.CodeMirror {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+}
+
 /* 用户资料弹窗样式 */
 .user-profile-popup {
     position: absolute;

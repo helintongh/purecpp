@@ -181,6 +181,9 @@
                 <div x-show="!isEditing" id="article-content" class="article-content"></div>
                 <!-- 编辑模式：复用撰写文章的 textarea 结构 -->
                 <div x-show="isEditing" x-cloak style="margin-top: 1rem;">
+                    <label>文章标题</label>
+                    <input type="text" x-model="title" maxlength="100" style="width: 100%; margin-bottom: 1rem; padding: 0.5rem 0.8rem; border: 1px solid var(--border-color); border-radius: 8px; background-color: var(--bg-card); color: var(--text-main); box-sizing: border-box; font-size: 1rem;" />
+
                     <label>文章摘要</label>
                     <textarea x-model="excerpt" rows="3" style="width: 100%; margin-bottom: 1rem;"></textarea>
 

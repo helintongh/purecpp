@@ -16,9 +16,16 @@
             --primary-color: #4a154b;
             --secondary-color: #350d36;
             --accent-color: #1177aa;
-            --message-bg: #ffffff;
-            --own-message-bg: #e8f5e8;
-            --sidebar-bg: #f8f9fa;
+            --chat-panel-bg: var(--bg-card);
+            --chat-surface-bg: var(--bg-page);
+            --chat-panel-border: var(--border-color);
+            --chat-text-color: var(--text-main);
+            --chat-muted-color: var(--muted-color);
+            --chat-hover-bg: var(--bg-search);
+            --chat-input-bg: var(--bg-card);
+            --message-bg: var(--bg-card);
+            --own-message-bg: color-mix(in srgb, var(--primary) 12%, var(--bg-card));
+            --sidebar-bg: var(--bg-page);
             --mention-badge: #ec0b43;
         }
         
@@ -174,13 +181,16 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background-color: white;
+            background-color: var(--chat-panel-bg);
+            color: var(--chat-text-color);
         }
         
         .chat-header {
             padding: 0 20px;
             height: 60px;
-            border-bottom: 1px solid #e8e8e8;
+            border-bottom: 1px solid var(--chat-panel-border);
+            background-color: var(--chat-panel-bg);
+            color: var(--chat-text-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -194,11 +204,12 @@
         .channel-name {
             font-weight: bold;
             font-size: 18px;
+            color: var(--chat-text-color);
         }
         
         .channel-topic {
             margin-left: 15px;
-            color: #666;
+            color: var(--chat-muted-color);
             font-size: 14px;
         }
         
@@ -213,10 +224,11 @@
             overflow-y: auto;
             padding: 20px;
             background-color: var(--sidebar-bg);
+            color: var(--chat-text-color);
             max-height: calc(100vh - 200px); /* 显式设置最大高度 */
             min-height: 0; /* 确保flex子元素正确计算高度 */
             scrollbar-width: thin; /* 自定义滚动条样式（可选） */
-            scrollbar-color: #ccc #f1f1f1; /* 自定义滚动条颜色（可选） */
+            scrollbar-color: var(--chat-panel-border) var(--chat-panel-bg); /* 自定义滚动条颜色（可选） */
         }
 
         /* 为WebKit浏览器（Chrome, Safari等）添加滚动条样式 */
@@ -225,69 +237,18 @@
         }
 
         .chat-messages::-webkit-scrollbar-track {
-            background: #f1f1f1; /* 滚动条背景 */
+            background: var(--chat-panel-bg); /* 滚动条背景 */
         }
 
         .chat-messages::-webkit-scrollbar-thumb {
-            background: #ccc; /* 滚动条滑块 */
+            background: var(--chat-panel-border); /* 滚动条滑块 */
             border-radius: 3px; /* 滚动条滑块圆角 */
         }
 
         .chat-messages::-webkit-scrollbar-thumb:hover {
-            background: #aaa; /* 滚动条滑块悬停颜色 */
+            background: var(--chat-muted-color); /* 滚动条滑块悬停颜色 */
         }
         
-        .channel-users {
-            width: 220px;
-            background-color: white;
-            border-left: 1px solid #e8e8e8;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .channel-users-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #e8e8e8;
-            font-weight: bold;
-            font-size: 14px;
-            color: #333;
-        }
-        
-        .channel-users-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px 0;
-        }
-        
-        .channel-user-item {
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-        }
-        
-        .channel-user-item:hover {
-            background-color: #f5f5f5;
-        }
-        
-        .channel-user-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 4px;
-            background-color: #ddd;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 10px;
-            font-weight: bold;
-            font-size: 14px;
-        }
-        
-        .channel-user-name {
-            font-size: 14px;
-            color: #333;
-        }
-
         .channel-action {
     background: transparent;
     border: none;
@@ -309,15 +270,16 @@
         
         .message {
             display: flex;
+            align-items: flex-start;
             margin-bottom: 16px;
-            padding: 8px 12px;
-            border-radius: 6px;
-            background-color: var(--message-bg);
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            padding: 4px 8px;
+            background-color: transparent;
+            color: var(--chat-text-color);
+            box-shadow: none;
         }
         
         .message.own-message {
-            background-color: var(--own-message-bg);
+            justify-content: flex-end;
         }
         
         .message-avatar {
@@ -328,36 +290,74 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-right: 12px;
+            margin-right: 10px;
             flex-shrink: 0;
             font-weight: bold;
         }
-        
-        .message-content {
-            flex: 1;
+
+        .own-message .message-avatar {
+            margin-right: 0;
+            margin-left: 10px;
         }
-        
-        .message-header {
+
+        .message-bubble-wrap {
+            max-width: min(72%, 760px);
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .own-message .message-bubble-wrap {
+            align-items: flex-end;
+        }
+
+        .message-meta {
             display: flex;
             align-items: center;
+            gap: 8px;
             margin-bottom: 4px;
+            color: var(--chat-muted-color);
+        }
+        
+        .own-message .message-meta {
+            flex-direction: row-reverse;
         }
         
         .message-user {
             font-weight: bold;
-            margin-right: 8px;
-            font-size: 16px;
+            font-size: 14px;
+            color: var(--chat-text-color);
         }
         
         .message-time {
-            color: #999;
+            color: var(--chat-muted-color);
             font-size: 12px;
+        }
+
+        .message-bubble {
+            border-radius: 10px;
+            background-color: var(--message-bg);
+            color: var(--chat-text-color);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            padding: 8px 12px;
+            min-width: 80px;
+            max-width: 100%;
+        }
+
+        .own-message .message-bubble {
+            background-color: var(--own-message-bg);
         }
         
         .message-text {
             line-height: 1.4;
             margin-bottom: 8px;
             font-size: 16px;
+            color: var(--chat-text-color);
+            overflow-wrap: anywhere;
+        }
+
+        .message-text a {
+            color: var(--accent-color);
         }
         
         .message-text .mention {
@@ -388,12 +388,17 @@
         .message-actions {
             display: flex;
             gap: 10px;
+            justify-content: flex-start;
+        }
+
+        .own-message .message-actions {
+            justify-content: flex-end;
         }
         
         .message-action {
             background: none;
             border: none;
-            color: #666;
+            color: var(--chat-muted-color);
             cursor: pointer;
             font-size: 12px;
             padding: 2px 6px;
@@ -401,11 +406,11 @@
         }
         
         .message-action:hover {
-            background-color: #f0f0f0;
+            background-color: var(--chat-hover-bg);
         }
         
         .emoji-reaction {
-            background-color: #f0f0f0;
+            background-color: var(--chat-hover-bg);
             border-radius: 10px;
             padding: 2px 8px;
             font-size: 12px;
@@ -413,10 +418,11 @@
             display: inline-flex;
             align-items: center;
             cursor: pointer;
+            color: var(--chat-text-color);
         }
         
         .emoji-reaction:hover {
-            background-color: #e0e0e0;
+            background-color: var(--chat-panel-border);
         }
         
         .emoji-reaction i {
@@ -434,8 +440,8 @@
         /* 输入区域 */
         .chat-input-container {
             padding: 20px;
-            border-top: 1px solid #e8e8e8;
-            background-color: white;
+            border-top: 1px solid var(--chat-panel-border);
+            background-color: var(--chat-panel-bg);
         }
         
         .chat-input-wrapper {
@@ -446,12 +452,14 @@
             width: 100%;
             min-height: 100px;
             padding: 12px;
-            border: 1px solid #ddd;
+            border: 1px solid var(--chat-panel-border);
             border-radius: 6px;
             font-family: inherit;
             font-size: 15px;
             resize: none;
             box-sizing: border-box;
+            background-color: var(--chat-input-bg);
+            color: var(--chat-text-color);
         }
         
         .chat-input:focus {
@@ -473,7 +481,7 @@
         .action-button {
             background: none;
             border: none;
-            color: #666;
+            color: var(--chat-muted-color);
             cursor: pointer;
             font-size: 18px;
             width: 36px;
@@ -485,7 +493,30 @@
         }
         
         .action-button:hover {
-            background-color: #f0f0f0;
+            background-color: var(--chat-hover-bg);
+        }
+
+        .chat-input-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--chat-muted-color);
+        }
+
+        .message-status {
+            color: var(--chat-muted-color);
+        }
+
+        .message-status.error {
+            color: #d1453b;
+            font-weight: 600;
+        }
+
+        .message-length-counter.over-limit {
+            color: #d1453b;
+            font-weight: 600;
         }
         
         .send-button {
@@ -508,14 +539,15 @@
             bottom: 100%;
             left: 0;
             right: 0;
-            background: white;
-            border: 1px solid #ddd;
+            background: var(--chat-panel-bg);
+            border: 1px solid var(--chat-panel-border);
             border-radius: 6px 6px 0 0;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
             max-height: 200px;
             overflow-y: auto;
             display: none;
             z-index: 100;
+            color: var(--chat-text-color);
         }
         
         .user-suggestion {
@@ -526,18 +558,18 @@
         }
         
         .user-suggestion:hover {
-            background-color: #f5f5f5;
+            background-color: var(--chat-hover-bg);
         }
         
         .user-suggestion.active {
-            background-color: #e8f0fe;
+            background-color: color-mix(in srgb, var(--primary) 14%, var(--chat-panel-bg));
         }
 
         /* 表情选择器样式 */
 .reaction-picker {
     position: relative;
-    background: white;
-    border: 1px solid #ddd;
+    background: var(--chat-panel-bg);
+    border: 1px solid var(--chat-panel-border);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     padding: 10px;
@@ -558,15 +590,15 @@
 }
 
 .reaction-emoji:hover {
-    background-color: #f0f0f0;
+    background-color: var(--chat-hover-bg);
     transform: scale(1.2);
 }
         
         /* 表情选择器 */
         .emoji-picker {
             position: relative;
-            background: white;
-            border: 1px solid #ddd;
+            background: var(--chat-panel-bg);
+            border: 1px solid var(--chat-panel-border);
             border-radius: 6px;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
             width: 300px;
@@ -586,7 +618,7 @@
         }
         
         .emoji-item:hover {
-            background-color: #f0f0f0;
+            background-color: var(--chat-hover-bg);
         }
         
         /* 响应式设计 */
@@ -619,18 +651,6 @@
                 right: 5px;
             }
             
-            .channel-users {
-                width: 60px;
-            }
-            
-            .channel-users-header,
-            .channel-user-name {
-                display: none;
-            }
-            
-            .channel-user-avatar {
-                margin-right: 0;
-            }
         }
     </style>
 </head>
@@ -686,7 +706,7 @@
                     <div class="channel-topic" id="current-channel-topic">欢迎来到PureCpp社区聊天室！</div>
                 </div>
                 <div class="chat-header-actions" style="display:flex; align-items:center; gap:8px;">
-                    <input type="text" id="chat-search-input" placeholder="搜索消息..." style="padding:6px 10px; border:1px solid #ddd; border-radius:4px; font-size:13px; width:180px;">
+                    <input type="text" id="chat-search-input" placeholder="搜索消息..." style="padding:6px 10px; border:1px solid var(--chat-panel-border); border-radius:4px; font-size:13px; width:180px; background:var(--chat-input-bg); color:var(--chat-text-color);">
                     <button id="chat-search-btn" style="padding:6px 12px; background:#4a154b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:13px;">搜索</button>
                     <button id="chat-search-clear" style="display:none; padding:6px 10px; background:#888; color:white; border:none; border-radius:4px; cursor:pointer; font-size:13px;">清除</button>
                 </div>
@@ -696,16 +716,6 @@
                 <div class="chat-messages" id="chat-messages">
                     <!-- 消息将通过JS动态添加 -->
                 </div>
-                
-                <!-- 右侧在线用户列表 -->
-                <div class="channel-users">
-                    <div class="channel-users-header">
-                        <i class="fas fa-users"></i> 在线成员
-                    </div>
-                    <div class="channel-users-list" id="channel-users-list">
-                        <!-- 当前频道的在线用户将通过JS动态添加 -->
-                    </div>
-                </div>
             </div>
             
             <div class="chat-input-container">
@@ -714,6 +724,10 @@
                     <textarea class="chat-input" id="chat-input" placeholder="输入消息... 使用@提及用户" maxlength="2000"></textarea>
                     <div class="user-suggestions" id="user-suggestions"></div>
                     <div class="emoji-picker" id="emoji-picker"></div>
+                </div>
+                <div class="chat-input-meta">
+                    <div class="message-status" id="message-status">单条消息最多 2000 字</div>
+                    <div class="message-length-counter" id="message-length-counter">0 / 2000</div>
                 </div>
                 <div class="input-actions">
                     <div class="action-buttons">
@@ -761,6 +775,7 @@
         let accessToken = null;
         let chatEventsBound = false;
         let creatingChannel = false;
+        let lastSearchQuery = '';
 
         // ========== DOM 元素 ==========
         const channelList = document.getElementById('channel-list');
@@ -775,7 +790,8 @@
         const currentChannelName = document.getElementById('current-channel-name');
         const currentChannelTopic = document.getElementById('current-channel-topic');
         const addChannelBtn = document.getElementById('add-channel-btn');
-        const channelUsersList = document.getElementById('channel-users-list');
+        const messageStatus = document.getElementById('message-status');
+        const messageLengthCounter = document.getElementById('message-length-counter');
 
         function isChatAdmin() {
             return currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
@@ -1192,6 +1208,7 @@
 
                 case 'error':
                     console.error('[chat] server error:', msg.msg);
+                    setMessageStatus(msg.msg || '操作失败', true);
                     break;
             }
         }
@@ -1237,7 +1254,6 @@
                     await loadHistory(currentChannelId);
                     updateChannelHeader();
                     renderMessages();
-                    renderChannelUsers();
                     await markChannelRead(currentChannelId);
                     wsSend({ type: 'switch_channel', channel_id: currentChannelId }, { silent: true });
                 } else {
@@ -1272,21 +1288,8 @@
             });
         }
 
-        // ========== 渲染：右侧频道成员 ==========
         function renderChannelUsers() {
-            channelUsersList.innerHTML = '';
-            onlineUsers.forEach(user => {
-                const div = document.createElement('div');
-                div.className = 'channel-user-item';
-                div.dataset.userId = user.id;
-                const color = colorForUserId(user.id);
-                const avatar = avatarForName(user.name);
-                div.innerHTML = `
-                    <div class="channel-user-avatar" style="background-color: ${color};">${avatar}</div>
-                    <div class="channel-user-name">${escapeHtml(user.name)}</div>
-                `;
-                channelUsersList.appendChild(div);
-            });
+            return;
         }
 
         // ========== 渲染：消息 ==========
@@ -1332,25 +1335,28 @@
                 }).join('')}</div>`;
             }
 
-            messageDiv.innerHTML = `
-                <div class="message-avatar" style="background-color: ${color};">${avatar}</div>
-                <div class="message-content">
-                    <div class="message-header">
+            const avatarHtml = `<div class="message-avatar" style="background-color: ${color};">${avatar}</div>`;
+            const bubbleHtml = `
+                <div class="message-bubble-wrap">
+                    <div class="message-meta">
                         <div class="message-user">${escapeHtml(msg.userName)}</div>
                         <div class="message-time">${escapeHtml(msg.time || '')}${msg.edited ? ' (已编辑)' : ''}</div>
                     </div>
-                    <div class="message-text">${formatMessageText(msg.text)}</div>
-                    ${reactionsHtml}
-                    <div class="message-actions">
-                        <button class="message-action react-btn" data-message-id="${msg.id}">
-                            <i class="far fa-smile"></i> 表情
-                        </button>
-                        <button class="message-action" data-action="reply" data-message-id="${msg.id}">回复</button>
-                        ${isOwn ? `<button class="message-action" data-action="edit" data-message-id="${msg.id}">编辑</button>` : ''}
-                        ${isOwn ? `<button class="message-action" data-action="delete" data-message-id="${msg.id}" style="color:#d1453b;">删除</button>` : ''}
+                    <div class="message-bubble">
+                        <div class="message-text">${formatMessageText(msg.text)}</div>
+                        ${reactionsHtml}
+                        <div class="message-actions">
+                            <button class="message-action react-btn" data-message-id="${msg.id}">
+                                <i class="far fa-smile"></i> 表情
+                            </button>
+                            <button class="message-action" data-action="reply" data-message-id="${msg.id}">回复</button>
+                            ${isOwn ? `<button class="message-action" data-action="edit" data-message-id="${msg.id}">编辑</button>` : ''}
+                            ${isOwn ? `<button class="message-action" data-action="delete" data-message-id="${msg.id}" style="color:#d1453b;">删除</button>` : ''}
+                        </div>
                     </div>
                 </div>
             `;
+            messageDiv.innerHTML = isOwn ? `${bubbleHtml}${avatarHtml}` : `${avatarHtml}${bubbleHtml}`;
             return messageDiv;
         }
 
@@ -1366,6 +1372,27 @@
             if (channel) {
                 currentChannelName.textContent = `# ${channel.name}`;
                 currentChannelTopic.textContent = channel.topic;
+            }
+        }
+
+        function setMessageStatus(text, isError = false) {
+            if (!messageStatus) return;
+            messageStatus.textContent = text;
+            messageStatus.classList.toggle('error', !!isError);
+        }
+
+        function updateMessageLengthHint() {
+            if (!chatInput || !messageLengthCounter) return;
+            const length = chatInput.value.length;
+            messageLengthCounter.textContent = `${length} / ${MAX_MESSAGE_LENGTH}`;
+            const overLimit = length > MAX_MESSAGE_LENGTH;
+            messageLengthCounter.classList.toggle('over-limit', overLimit);
+            if (overLimit) {
+                setMessageStatus(`消息超出 ${length - MAX_MESSAGE_LENGTH} 字，请删减后发送`, true);
+            } else if (isSearchMode && lastSearchQuery) {
+                setMessageStatus(`搜索结果：${lastSearchQuery}`);
+            } else {
+                setMessageStatus(`单条消息最多 ${MAX_MESSAGE_LENGTH} 字`);
             }
         }
 
@@ -1468,7 +1495,8 @@
             if (!text) return;
             if (!currentChannelId) return;
             if (text.length > MAX_MESSAGE_LENGTH) {
-                alert(`消息不能超过${MAX_MESSAGE_LENGTH}个字符`);
+                setMessageStatus(`消息不能超过 ${MAX_MESSAGE_LENGTH} 字，当前 ${text.length} 字`, true);
+                updateMessageLengthHint();
                 return;
             }
 
@@ -1477,7 +1505,11 @@
                 channel_id: currentChannelId,
                 text: text
             });
-            if (ok) chatInput.value = '';
+            if (ok) {
+                chatInput.value = '';
+                setMessageStatus(`单条消息最多 ${MAX_MESSAGE_LENGTH} 字`);
+                updateMessageLengthHint();
+            }
         }
 
         // ========== 打字指示器 ==========
@@ -1682,8 +1714,10 @@
                 }
                 messages[currentChannelId] = results;
                 messageLoadCount = results.length;
+                lastSearchQuery = q;
                 renderMessages();
                 clearBtn.style.display = 'inline-block';
+                setMessageStatus(results.length > 0 ? `搜索结果：${q}` : `未找到包含“${q}”的消息`, results.length === 0);
             } catch (e) {
                 alert('搜索失败：' + e.message);
             }
@@ -1698,8 +1732,11 @@
                 messages = savedMessages;
                 savedMessages = null;
                 isSearchMode = false;
+                lastSearchQuery = '';
                 messageLoadCount = 50;
                 renderMessages();
+                setMessageStatus(`单条消息最多 ${MAX_MESSAGE_LENGTH} 字`);
+                updateMessageLengthHint();
             }
         }
 
@@ -1717,6 +1754,7 @@
             chatInput.addEventListener('input', () => {
                 showUserSuggestions();
                 sendTypingEvent();
+                updateMessageLengthHint();
             });
 
             document.addEventListener('click', (e) => {
@@ -1865,6 +1903,7 @@
         }
 
         // ========== 启动 ==========
+        updateMessageLengthHint();
         initApp();
     </script>
 </body>

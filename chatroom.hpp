@@ -165,6 +165,18 @@ inline std::string chat_format_time(uint64_t ts_ms) {
   return buf;
 }
 
+inline std::string escape_sql_like(std::string_view text) {
+  std::string escaped;
+  escaped.reserve(text.size() * 2);
+  for (char ch : text) {
+    if (ch == '\\' || ch == '%' || ch == '_') {
+      escaped.push_back('\\');
+    }
+    escaped.push_back(ch);
+  }
+  return escaped;
+}
+
 inline std::string url_decode(const std::string &s) {
   std::string r;
   r.reserve(s.size());
@@ -1823,29 +1835,17 @@ public:
     }
 
     std::vector<chat_message_t> msgs;
-#if defined(PURECPP_DB_MYSQL)
+    std::string like_pattern = "%" + escape_sql_like(q) + "%";
     if (ch_str.empty()) {
       msgs = conn->query_s<chat_message_t>(
-          "MATCH(content) AGAINST(? IN NATURAL LANGUAGE MODE) "
-          "ORDER BY created_at DESC LIMIT 100",
-          q);
+          "content LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 100",
+          like_pattern);
     } else {
       msgs = conn->query_s<chat_message_t>(
-          "channel_id = ? AND MATCH(content) AGAINST(? IN NATURAL LANGUAGE MODE) "
+          "channel_id = ? AND content LIKE ? ESCAPE '\\' "
           "ORDER BY created_at DESC LIMIT 100",
-          channel_id, q);
-    }
-#else
-    std::string like_pattern = "%" + q + "%";
-    if (ch_str.empty()) {
-      msgs = conn->query_s<chat_message_t>(
-          "content LIKE ? ORDER BY created_at DESC LIMIT 100", like_pattern);
-    } else {
-      msgs = conn->query_s<chat_message_t>(
-          "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
           channel_id, like_pattern);
     }
-#endif
 
     // Batch load reactions (avoid N+1)
     auto reactions_map = batch_build_reactions(msgs);
@@ -2086,7 +2086,18 @@ public:
       if (ec) continue;
 
       if (cm.type == "message") {
-        if (!chat_hub::instance().check_msg_rate(conn_key)) continue;
+        if (cm.text.size() > 2000) {
+          co_await chat_hub::instance().send_to(
+              session_state,
+              R"({"type":"error","msg":"消息不能超过2000字"})");
+          continue;
+        }
+        if (!chat_hub::instance().check_msg_rate(conn_key)) {
+          co_await chat_hub::instance().send_to(
+              session_state,
+              R"({"type":"error","msg":"发送过于频繁，请稍后再试"})");
+          continue;
+        }
         co_await handle_chat_message(user_id, user_name, cm.channel_id, cm.text);
       } else if (cm.type == "subscribe_channel") {
         if (user_can_access_channel(user_id, cm.channel_id)) {
@@ -2099,6 +2110,12 @@ public:
       } else if (cm.type == "react") {
         co_await handle_reaction(user_id, cm.message_id, cm.emoji);
       } else if (cm.type == "edit_message") {
+        if (cm.text.size() > 2000) {
+          co_await chat_hub::instance().send_to(
+              session_state,
+              R"({"type":"error","msg":"编辑内容不能超过2000字"})");
+          continue;
+        }
         co_await handle_edit_message(user_id, cm.message_id, cm.text);
       } else if (cm.type == "delete_message") {
         co_await handle_delete_message(user_id, cm.message_id);

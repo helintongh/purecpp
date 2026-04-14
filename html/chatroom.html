@@ -760,6 +760,7 @@
         let markReadTimer = null;
         let accessToken = null;
         let chatEventsBound = false;
+        let creatingChannel = false;
 
         // ========== DOM 元素 ==========
         const channelList = document.getElementById('channel-list');
@@ -885,7 +886,8 @@
             channels = (data.data || []).map(c => ({
                 id: c.id, name: c.name, topic: c.topic,
                 is_private: c.is_private || 0, creator_id: c.creator_id || 0,
-                unread: c.unread || 0
+                unread: c.unread || 0,
+                is_system: (c.id || 0) <= 3
             }));
         }
 
@@ -974,18 +976,32 @@
             syncWsChannelState();
         }
 
-        async function createChannelApi(name, topic, isPrivate = false) {
+        async function createChannelApi(name, topic) {
             const res = await fetch('/api/v1/chat/channel', {
                 method: 'POST',
                 headers: {
                     'Authorization': 'Bearer ' + accessToken,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ name, topic, is_private: isPrivate ? 1 : 0 })
+                body: JSON.stringify({ name, topic, is_private: 0 })
             });
             const data = await res.json();
             if (!data.success) throw new Error(data.message || '创建失败');
             return data.data;
+        }
+
+        async function deleteChannelApi(channelId) {
+            const res = await fetch('/api/v1/chat/delete_channel', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ channel_id: channelId })
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.message || '删除失败');
+            return data;
         }
 
         // 将后端消息格式规范化为前端使用格式
@@ -1162,6 +1178,11 @@
                     break;
                 }
 
+                case 'channel_deleted': {
+                    handleChannelDeleted(msg.channel_id);
+                    break;
+                }
+
                 case 'typing': {
                     if (msg.user_id !== currentUser.id && msg.channel_id === currentChannelId) {
                         showTypingIndicator(msg.user_name);
@@ -1194,14 +1215,39 @@
                 li.className = `channel-item ${channel.id === currentChannelId ? 'active' : ''}`;
                 li.dataset.channelId = channel.id;
                 const icon = channel.is_private ? 'fa-lock' : 'fa-hashtag';
+                const canDelete = isChatAdmin() && !channel.is_system;
                 li.innerHTML = `
                     <i class="fas ${icon}"></i>
                     <span class="channel-item-text">${escapeHtml(channel.name)}</span>
                     ${channel.unread > 0 ? `<span class="mention-badge">${channel.unread}</span>` : ''}
+                    ${canDelete ? `<button class="message-action delete-channel-btn" data-action="delete-channel" data-channel-id="${channel.id}" style="margin-left:8px;color:#d1453b;">删除</button>` : ''}
                 `;
-                li.addEventListener('click', () => switchChannel(channel.id));
                 channelList.appendChild(li);
             });
+        }
+
+        async function handleChannelDeleted(channelId) {
+            if (!channelId) return;
+            channels = channels.filter(c => c.id !== channelId);
+            delete messages[channelId];
+
+            if (currentChannelId === channelId) {
+                currentChannelId = channels.length > 0 ? channels[0].id : null;
+                if (currentChannelId) {
+                    await loadHistory(currentChannelId);
+                    updateChannelHeader();
+                    renderMessages();
+                    renderChannelUsers();
+                    await markChannelRead(currentChannelId);
+                    wsSend({ type: 'switch_channel', channel_id: currentChannelId }, { silent: true });
+                } else {
+                    chatMessages.innerHTML = '';
+                    currentChannelName.textContent = '# 无频道';
+                    currentChannelTopic.textContent = '当前没有可用频道';
+                }
+            }
+
+            renderChannels();
         }
 
         // ========== 渲染：在线成员（左栏） ==========
@@ -1334,6 +1380,34 @@
             return escapeHtml(s);
         }
 
+        function escapeRegex(s) {
+            return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function getMentionableNames() {
+            const names = new Set();
+
+            if (currentUser && currentUser.name) {
+                names.add(currentUser.name);
+            }
+
+            onlineUsers.forEach(user => {
+                if (user && user.name) {
+                    names.add(user.name);
+                }
+            });
+
+            (messages[currentChannelId] || []).forEach(msg => {
+                if (msg && msg.userName) {
+                    names.add(msg.userName);
+                }
+            });
+
+            return Array.from(names)
+                .filter(name => name && name.trim())
+                .sort((a, b) => b.length - a.length);
+        }
+
         // 格式化消息文本（@提及、URL）
         function formatMessageText(text) {
             let formatted = escapeHtml(text);
@@ -1344,12 +1418,19 @@
                 if (!/^(https?:\/\/|\/)/i.test(decodedUrl)) return match;
                 return `<img src="${url}" alt="${alt}" style="max-width:400px; max-height:300px; border-radius:6px; cursor:pointer; display:block; margin:4px 0;" onclick="window.open('${url}','_blank')">`;
             });
-            // @提及：匹配 @开头、非空白的连续字符
-            formatted = formatted.replace(/@([\u4e00-\u9fa5\w]+(?:\s[\u4e00-\u9fa5\w]+)?)/g, (match, name) => {
-                const isSelf = name === currentUser.name || name.startsWith(currentUser.name);
-                const cls = isSelf ? 'mention-self' : 'mention-other';
-                return `<span class="${cls}">@${name}</span>`;
-            });
+            // @提及：仅高亮已知用户名，避免把 @ 后面的整段文本误判为 mention。
+            const mentionableNames = getMentionableNames();
+            if (mentionableNames.length > 0) {
+                const mentionPattern = new RegExp(
+                    `(^|[^\\u4e00-\\u9fa5\\w])@(${mentionableNames.map(escapeRegex).join('|')})(?=$|[^\\u4e00-\\u9fa5\\w])`,
+                    'g'
+                );
+                formatted = formatted.replace(mentionPattern, (match, prefix, name) => {
+                    const isSelf = !!currentUser && name === currentUser.name;
+                    const cls = isSelf ? 'mention-self' : 'mention-other';
+                    return `${prefix}<span class="${cls}">@${name}</span>`;
+                });
+            }
             // URL
             formatted = formatted.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
             return formatted;
@@ -1508,20 +1589,28 @@
                 alert('仅管理员可创建频道');
                 return;
             }
-            const name = prompt('请输入新频道名称:');
+            if (creatingChannel) return;
+
+            const name = (prompt('请输入新频道名称:') || '').trim();
             if (!name) return;
-            const topic = prompt('请输入频道主题:') || '新创建的频道';
-            const isPrivate = confirm('是否设为私有频道？（仅邀请成员可见）');
+
+            creatingChannel = true;
+            if (addChannelBtn) addChannelBtn.disabled = true;
+
             try {
-                const ch = await createChannelApi(name, topic, isPrivate);
+                const ch = await createChannelApi(name, `${name} 频道`);
                 channels.push({
                     id: ch.id, name: ch.name, topic: ch.topic,
-                    is_private: ch.is_private, creator_id: ch.creator_id, unread: 0
+                    is_private: ch.is_private, creator_id: ch.creator_id, unread: 0,
+                    is_system: (ch.id || 0) <= 3
                 });
                 renderChannels();
                 await switchChannel(ch.id);
             } catch (e) {
                 alert('创建频道失败：' + e.message);
+            } finally {
+                creatingChannel = false;
+                if (addChannelBtn) addChannelBtn.disabled = false;
             }
         }
 
@@ -1683,7 +1772,41 @@
                 fileInput.click();
             });
 
-            addChannelBtn.addEventListener('click', createNewChannel);
+            if (addChannelBtn) {
+                addChannelBtn.onclick = createNewChannel;
+            }
+
+            channelList.addEventListener('click', async (e) => {
+                const deleteBtn = e.target.closest('[data-action="delete-channel"]');
+                if (deleteBtn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const channelId = parseInt(deleteBtn.dataset.channelId, 10);
+                    if (!channelId) return;
+
+                    if (!confirm('确定要删除这个频道吗？频道内消息会一并删除。')) {
+                        return;
+                    }
+
+                    deleteBtn.disabled = true;
+                    try {
+                        await deleteChannelApi(channelId);
+                        await handleChannelDeleted(channelId);
+                    } catch (err) {
+                        alert('删除频道失败：' + err.message);
+                        deleteBtn.disabled = false;
+                    }
+                    return;
+                }
+
+                const item = e.target.closest('.channel-item');
+                if (!item) return;
+
+                const channelId = parseInt(item.dataset.channelId, 10);
+                if (!channelId || channelId === currentChannelId) return;
+                switchChannel(channelId);
+            });
 
             // 搜索事件
             const searchBtn = document.getElementById('chat-search-btn');

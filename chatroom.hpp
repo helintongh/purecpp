@@ -109,6 +109,10 @@ struct chat_create_channel_req {
   uint32_t is_private;
 };
 
+struct chat_delete_channel_req {
+  uint64_t channel_id = 0;
+};
+
 struct chat_upload_req {
   std::string filename;
   std::string file_data; // base64 encoded
@@ -669,6 +673,12 @@ public:
     if (it != entries_.end() && it->second.message_count > 0) {
       it->second.message_count--;
     }
+  }
+
+  void erase(uint64_t channel_id) {
+    std::unique_lock lk(mtx_);
+    entries_.erase(channel_id);
+    channel_mutexes_.erase(channel_id);
   }
 
   std::shared_ptr<std::mutex> channel_mutex(uint64_t channel_id) {
@@ -1272,6 +1282,21 @@ public:
     }
     state.active_channel_id = channel_id;
     active_channel_keys_[channel_id].insert(key);
+  }
+
+  void remove_channel(uint64_t channel_id) {
+    if (channel_id == 0) return;
+
+    std::unique_lock lk(mtx_);
+    active_channel_keys_.erase(channel_id);
+    channel_subscriber_keys_.erase(channel_id);
+    for (auto &[key, state] : sessions_) {
+      if (!state) continue;
+      if (state->active_channel_id == channel_id) {
+        state->active_channel_id = 0;
+      }
+      state->subscribed_channels.erase(channel_id);
+    }
   }
 
   std::vector<std::pair<uint64_t, std::string>> online_users() {
@@ -1879,7 +1904,7 @@ public:
     str_to_arr(ch.name, ci.name);
     str_to_arr(ch.topic, ci.topic.empty() ? "新创建的频道" : ci.topic);
     ch.creator_id = creator_id;
-    ch.is_private = ci.is_private ? 1 : 0;
+    ch.is_private = 0;
     ch.created_at = get_timestamp_milliseconds();
     ch.message_count = 0;
 
@@ -1891,15 +1916,6 @@ public:
       resp.set_status_and_content(status_type::bad_request,
                                   make_error("频道已存在或创建失败"));
       return;
-    }
-
-    // Auto-join creator as first member for private channels
-    if (ch.is_private && ch.creator_id > 0) {
-      chat_channel_member_t m{};
-      m.channel_id = id;
-      m.user_id = ch.creator_id;
-      m.joined_at = ch.created_at;
-      conn->insert(m);
     }
 
     ch.id = id;
@@ -1916,6 +1932,84 @@ public:
        << R"(,"unread":0,"joined":true}})";
     resp.set_content_type<resp_content_type::json>();
     resp.set_status_and_content(status_type::ok, os.str());
+  }
+
+  // POST /api/v1/chat/delete_channel
+  void delete_channel(coro_http_request &req, coro_http_response &resp) {
+    auto operator_id = get_user_id_from_token(req);
+    if (operator_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized,
+                                  make_error("未授权"));
+      return;
+    }
+    if (!is_chat_admin(operator_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("仅管理员可删除频道", 403));
+      return;
+    }
+
+    auto body = req.get_body();
+    if (body.empty()) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("请求体不能为空"));
+      return;
+    }
+
+    chat_delete_channel_req info{};
+    std::error_code ec;
+    iguana::from_json(info, body, ec);
+    if (ec || info.channel_id == 0) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("频道参数错误"));
+      return;
+    }
+
+    if (info.channel_id <= 3) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("默认频道不允许删除"));
+      return;
+    }
+
+    auto conn = get_db_pool().get();
+    if (!conn) { set_server_internel_error(resp); return; }
+
+    auto channels = conn->query_s<chat_channel_t>("id = ?", info.channel_id);
+    if (channels.empty()) {
+      resp.set_status_and_content(status_type::not_found,
+                                  make_error("频道不存在", 404));
+      return;
+    }
+
+    if (!conn->begin()) {
+      set_server_internel_error(resp);
+      return;
+    }
+
+    auto msgs = conn->query_s<chat_message_t>("channel_id = ?", info.channel_id);
+    for (auto &msg : msgs) {
+      conn->delete_records_s<chat_reaction_t>("message_id = ?", msg.id);
+    }
+    conn->delete_records_s<chat_message_t>("channel_id = ?", info.channel_id);
+    conn->delete_records_s<chat_read_position_t>("channel_id = ?", info.channel_id);
+    conn->delete_records_s<chat_channel_member_t>("channel_id = ?", info.channel_id);
+    conn->delete_records_s<chat_channel_t>("id = ?", info.channel_id);
+
+    if (!conn->commit()) {
+      conn->rollback();
+      set_server_internel_error(resp);
+      return;
+    }
+
+    chat_hub::instance().remove_channel(info.channel_id);
+    chat_channel_cache::instance().erase(info.channel_id);
+
+    std::ostringstream ws_os;
+    ws_os << R"({"type":"channel_deleted","channel_id":)" << info.channel_id << "}";
+    async_simple::coro::syncAwait(chat_hub::instance().broadcast(
+        ws_os.str(), chat_hub::priority::normal));
+
+    resp.set_content_type<resp_content_type::json>();
+    resp.set_status_and_content(status_type::ok, make_success("删除频道成功"));
   }
 
   // GET /ws/chat?token=<jwt>

@@ -4,7 +4,7 @@ project(purecpp VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(PURECPP_CINATRA_DIR ../cinatra1/include)
+set(PURECPP_CINATRA_DIR ../cinatra/include)
 set(PURECPP_ORMPP_DIR ../ormpp)
 set(PURECPP_IGUANA_DIR ../iguana)
 set(PURECPP_SQLITE_DIR ../ormpp/thirdparty/sqlite3)

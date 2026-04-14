@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.hpp"
+#include <algorithm>
 #include <mutex>
 #include <optional>
 #include <regex>
@@ -224,7 +225,7 @@ private:
 
     // 直接使用已清理过的时间戳列表
     auto &timestamps = record_it->second.timestamps;
-    return std::max(0,
+    return (std::max)(0,
                     config.max_requests - static_cast<int>(timestamps.size()));
   }
 

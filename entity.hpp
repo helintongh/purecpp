@@ -1,9 +1,7 @@
 #pragma once
 #include <string>
 
-#include <ormpp/connection_pool.hpp>
-#include <ormpp/dbng.hpp>
-#include <ormpp/mysql.hpp>
+#include "db_backend.hpp"
 using namespace ormpp;
 
 namespace purecpp {

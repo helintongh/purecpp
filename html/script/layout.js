@@ -184,6 +184,16 @@ function toggleMenu() {
 
 // 检查用户是否登录
 function checkUserLogin() {
+    if (typeof apiService === 'undefined') {
+        const loginLink = document.getElementById('login-link');
+        const registerLink = document.getElementById('register-link');
+        const userInfoElement = document.getElementById('user-info');
+        if (loginLink) loginLink.style.display = 'block';
+        if (registerLink) registerLink.style.display = 'block';
+        if (userInfoElement) userInfoElement.style.display = 'none';
+        return;
+    }
+
     // 使用apiService获取用户信息和token
     const userInfo = apiService.getUserInfo();
     const token = apiService.getAccessToken();
@@ -249,7 +259,9 @@ function initUserMenu() {
 
             // 使用apiService处理登出
             try {
-                await apiService.logout();
+                if (typeof apiService !== 'undefined') {
+                    await apiService.logout();
+                }
             } catch (error) {
                 console.error('Logout request failed:', error);
             } finally {

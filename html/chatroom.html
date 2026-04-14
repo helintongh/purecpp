@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="css/simplemde.min.css">
     <link rel="stylesheet" href="css/atom-one-dark.min.css">
     <link rel="stylesheet" href="css/purecpp.css">
+    <link rel="icon" type="image/png" href="/logo.png">
 
     <script defer src="script/alpine.js"></script>
     <style>
@@ -684,6 +685,11 @@
                     <div class="channel-name" id="current-channel-name"># 通用聊天</div>
                     <div class="channel-topic" id="current-channel-topic">欢迎来到PureCpp社区聊天室！</div>
                 </div>
+                <div class="chat-header-actions" style="display:flex; align-items:center; gap:8px;">
+                    <input type="text" id="chat-search-input" placeholder="搜索消息..." style="padding:6px 10px; border:1px solid #ddd; border-radius:4px; font-size:13px; width:180px;">
+                    <button id="chat-search-btn" style="padding:6px 12px; background:#4a154b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:13px;">搜索</button>
+                    <button id="chat-search-clear" style="display:none; padding:6px 10px; background:#888; color:white; border:none; border-radius:4px; cursor:pointer; font-size:13px;">清除</button>
+                </div>
             </div>
             
             <div class="chat-content">
@@ -703,8 +709,9 @@
             </div>
             
             <div class="chat-input-container">
+                <div id="typing-indicator" style="display:none; padding:2px 16px; font-size:12px; color:#888; font-style:italic;"></div>
                 <div class="chat-input-wrapper">
-                    <textarea class="chat-input" id="chat-input" placeholder="输入消息... 使用@提及用户"></textarea>
+                    <textarea class="chat-input" id="chat-input" placeholder="输入消息... 使用@提及用户" maxlength="2000"></textarea>
                     <div class="user-suggestions" id="user-suggestions"></div>
                     <div class="emoji-picker" id="emoji-picker"></div>
                 </div>
@@ -725,69 +732,36 @@
 
 <!-- 统一页脚占位符 -->
     <div id="footer-container"></div>
+    <script src="script/api_service.js"></script>
     <script src="script/layout.js"></script>
 
     <script>
-        // 初始化数据
-        const initialUsers = [
-            { id: 1, name: "You (您)", avatar: "Y", color: "#4a6fa5", online: true, mentions: 0, joinedChannels: [1, 2] },
-            { id: 2, name: "Alex Johnson", avatar: "A", color: "#d1453b", online: true, mentions: 0, joinedChannels: [1, 2] },
-            { id: 3, name: "Sam Wilson", avatar: "S", color: "#2e8540", online: true, mentions: 0, joinedChannels: [1, 2] },
-            { id: 4, name: "Taylor Smith", avatar: "T", color: "#6f42c1", online: false, mentions: 0, joinedChannels: [1] },
-            { id: 5, name: "Jordan Lee", avatar: "J", color: "#e36209", online: true, mentions: 0, joinedChannels: [1, 2] },
-            { id: 6, name: "Chris Brown", avatar: "C", color: "#0086b3", online: true, mentions: 0, joinedChannels: [1, 3] },
-            { id: 7, name: "Casey Miller", avatar: "C", color: "#795548", online: false, mentions: 0, joinedChannels: [1] }
-        ];
-        
-        const initialChannels = [
-            { id: 1, name: "通用聊天", topic: "欢迎来到PureCpp 社区聊天室！", unread: 0, joined: true },
-            { id: 2, name: "项目讨论", topic: "讨论项目相关事宜", unread: 3, joined: true },
-            { id: 3, name: "技术问题", topic: "技术问题求助与解答", unread: 0, joined: false },
-            { id: 4, name: "内部测试", topic: "仅供测试使用", unread: 0, joined: false } // 新增一个未加入的频道
-        ];
-        
-        // 初始消息
-        const initialMessages = {
-            1: [
-                { id: 1, userId: 2, userName: "Alex Johnson", text: "大家好！欢迎来到PureCpp聊天室！", time: "09:30", reactions: [] },
-                { id: 2, userId: 3, userName: "Sam Wilson", text: "嗨 @You (您)，今天代码审核完成了吗？", time: "09:32", reactions: [{emoji: "👍", count: 2}] },
-                { id: 3, userId: 1, userName: "You (您)", text: "还没呢，@Sam Wilson。大概还需要一个小时。", time: "09:35", reactions: [] },
-                { id: 4, userId: 5, userName: "Jordan Lee", text: "有人看过最新提交的PR吗？", time: "09:40", reactions: [] },
-                { id: 5, userId: 2, userName: "Alex Johnson", text: "我刚看了，@Jordan Lee。有一些小问题需要修改。", time: "09:42", reactions: [{emoji: "👀", count: 1}] },
-                { id: 6, userId: 3, userName: "Sam Wilson", text: "我上传了新的设计图，请大家看一下：https://example.com/design.png", time: "10:15", reactions: [] },
-                { id: 7, userId: 5, userName: "Jordan Lee", text: "看起来不错！", time: "10:20", reactions: [{emoji: "❤️", count: 3}] },
-                { id: 8, userId: 1, userName: "You (您)", text: "我同意 @Jordan Lee，设计很好。@Alex Johnson 你觉得呢？", time: "10:22", reactions: [] },
-                { id: 9, userId: 2, userName: "Alex Johnson", text: "我也喜欢这个设计。不过我们需要考虑响应式布局。", time: "10:25", reactions: [] },
-                { id: 10, userId: 3, userName: "Sam Wilson", text: "好建议，我会调整的。", time: "10:30", reactions: [{emoji: "✅", count: 1}] },
-                { id: 11, userId: 6, userName: "Chris Brown", text: "早上好各位！今天会议是下午3点吗？", time: "10:35", reactions: [] },
-                { id: 12, userId: 1, userName: "You (您)", text: "是的 @Chris Brown，下午3点在3号会议室。", time: "10:37", reactions: [] },
-                { id: 13, userId: 3, userName: "Sam Wilson", text: "@You (您) 别忘了检查我刚发的PR！", time: "10:40", reactions: [] },
-                { id: 14, userId: 5, userName: "Jordan Lee", text: "我刚修复了那个bug，可以测试了。", time: "10:45", reactions: [] },
-                { id: 15, userId: 2, userName: "Alex Johnson", text: "好的，我来测试一下。", time: "10:47", reactions: [] }
-            ],
-            2: [
-                { id: 16, userId: 5, userName: "Jordan Lee", text: "下一个sprint的计划大家有什么想法？", time: "昨天 14:20", reactions: [] },
-                { id: 17, userId: 2, userName: "Alex Johnson", text: "我认为应该先完成用户认证模块。@You (您) 你觉得呢？", time: "昨天 14:35", reactions: [] },
-                { id: 18, userId: 1, userName: "You (您)", text: "同意，认证模块优先级应该最高。", time: "昨天 14:40", reactions: [] }
-            ],
-            3: [
-                { id: 19, userId: 3, userName: "Sam Wilson", text: "有人遇到过这个编译错误吗？", time: "昨天 11:10", reactions: [] },
-                { id: 20, userId: 1, userName: "You (您)", text: "@Sam Wilson 我遇到过，你需要更新依赖库版本。", time: "昨天 11:15", reactions: [{emoji: "💡", count: 1}] }
-            ]
-        };
-        
-        // 常用表情
-        const commonEmojis = ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "😘", "🥰", "😗", "😙", "😚", "🙂", "🤗", "🤩", "🤔", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "😯", "😪", "😫", "🥱", "😴", "😌", "😛", "😜", "😝", "🤤", "😒", "😓", "😔", "😕", "🙃", "🤑", "😲", "☹️", "🙁", "😖", "😞", "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "🤯", "😬", "😰", "😱", "🥵", "🥶", "😳", "🤪", "😵", "😠", "😡", "🤬", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "😇", "🥳", "🥺", "🤠", "🤡", "🤥", "🤫", "🤭", "🧐", "🤓", "💩", "👍", "👎", "👀", "❤️", "🔥", "🎉", "🚀", "💡"];
-        
-        // 应用状态
-        let currentUser = initialUsers[0];
-        let currentChannelId = 1;
-        let users = [...initialUsers];
-        let channels = [...initialChannels];
-        let messages = JSON.parse(JSON.stringify(initialMessages)); // 深度复制
-        let messageLoadCount = 12;
-        
-        // DOM元素
+        // ========== 常用表情 ==========
+        const chatCommonEmojis = ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "😘", "🥰", "😗", "😙", "😚", "🙂", "🤗", "🤩", "🤔", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "😯", "😪", "😫", "🥱", "😴", "😌", "😛", "😜", "😝", "🤤", "😒", "😓", "😔", "😕", "🙃", "🤑", "😲", "☹️", "🙁", "😖", "😞", "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "🤯", "😬", "😰", "😱", "🥵", "🥶", "😳", "🤪", "😵", "😠", "😡", "🤬", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "😇", "🥳", "🥺", "🤠", "🤡", "🤥", "🤫", "🤭", "🧐", "🤓", "💩", "👍", "👎", "👀", "❤️", "🔥", "🎉", "🚀", "💡"];
+
+        // ========== 颜色生成 ==========
+        const userColors = ["#4a6fa5", "#d1453b", "#2e8540", "#6f42c1", "#e36209", "#0086b3", "#795548", "#9c27b0", "#ff5722", "#607d8b"];
+        function colorForUserId(userId) {
+            return userColors[userId % userColors.length];
+        }
+        function avatarForName(name) {
+            return (name && name.length > 0) ? name[0].toUpperCase() : '?';
+        }
+
+        // ========== 应用状态 ==========
+        let currentUser = null;         // {id, name, avatar, color}
+        let currentChannelId = null;
+        let channels = [];              // [{id, name, topic, unread}]
+        let messages = {};              // channelId -> [msg]
+        let onlineUsers = [];           // [{id, name}]
+        let messageLoadCount = 50;
+        let ws = null;
+        let reconnectTimer = null;
+        let markReadTimer = null;
+        let accessToken = null;
+        let chatEventsBound = false;
+
+        // ========== DOM 元素 ==========
         const channelList = document.getElementById('channel-list');
         const userList = document.getElementById('user-list');
         const chatMessages = document.getElementById('chat-messages');
@@ -801,415 +775,700 @@
         const currentChannelTopic = document.getElementById('current-channel-topic');
         const addChannelBtn = document.getElementById('add-channel-btn');
         const channelUsersList = document.getElementById('channel-users-list');
-        
-        // 初始化应用
-        function initApp() {
-            // 计算初始的@提及数量
-            calculateInitialMentions();
-            
+
+        // ========== 初始化 ==========
+        async function initApp() {
+            // 从主系统获取 JWT token（与其他页面一致）
+            accessToken = apiService.getAccessToken();
+            const userInfo = apiService.getUserInfo();
+
+            if (!accessToken || !userInfo) {
+                // 未登录，跳转主登录页
+                window.location.href = '/login.html';
+                return;
+            }
+
+            try {
+                if (!userInfo.id || !userInfo.username) {
+                    throw new Error('invalid session');
+                }
+
+                currentUser = {
+                    id: userInfo.id,
+                    name: userInfo.username,
+                    avatar: avatarForName(userInfo.username),
+                    color: colorForUserId(userInfo.id)
+                };
+
+                await startChat();
+            } catch (e) {
+                console.warn('[chat] invalid session, redirect to login', e);
+                window.location.href = '/login.html';
+            }
+        }
+
+        function clearChatSession() {
+            currentUser = null;
+            channels = [];
+            messages = {};
+            onlineUsers = [];
+            currentChannelId = null;
+
+            if (ws) {
+                try { ws.close(); } catch (e) {}
+                ws = null;
+            }
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        }
+
+        async function startChat() {
+            // 更新侧边栏用户信息
+            const profileAvatar = document.querySelector('.user-profile .user-avatar');
+            const profileName = document.querySelector('.user-profile .user-name');
+            if (profileAvatar) {
+                profileAvatar.textContent = currentUser.avatar;
+                profileAvatar.style.backgroundColor = currentUser.color;
+            }
+            if (profileName) profileName.textContent = currentUser.name;
+
+            // 2. 拉取频道列表
+            await loadChannels();
+
+            if (channels.length === 0) {
+                alert('没有可用的频道');
+                return;
+            }
+
+            // 3. 选择首个频道并加载历史
+            currentChannelId = channels[0].id;
+            await loadHistory(currentChannelId);
+
+            // 4. 渲染 UI
             renderChannels();
-            renderUsers();
+            renderOnlineUsers();
             renderChannelUsers();
             renderMessages();
-            
-            // 设置当前频道信息
-            const currentChannel = channels.find(c => c.id === currentChannelId);
-            currentChannelName.textContent = `# ${currentChannel.name}`;
-            currentChannelTopic.textContent = currentChannel.topic;
-            
-            // 事件监听
-            setupEventListeners();
+            updateChannelHeader();
+
+            // 5. 建立 WebSocket 连接
+            connectWebSocket();
+
+            // 6. 事件监听
+            if (!chatEventsBound) {
+                setupEventListeners();
+                chatEventsBound = true;
+            }
         }
-        
-        // 计算初始的@提及数量
-        function calculateInitialMentions() {
-            // 遍历所有消息，查找@当前用户的消息
-            Object.values(messages).forEach(channelMessages => {
-                channelMessages.forEach(msg => {
-                    // 检查消息中是否@了当前用户
-                    const mentionRegex = /@You\s*\(\s*您\s*\)|@You/g;
-                    if (mentionRegex.test(msg.text) && msg.userId !== currentUser.id) {
-                        currentUser.mentions++;
-                    }
-                });
+
+        // ========== REST API ==========
+        async function loadChannels() {
+            const res = await fetch('/api/v1/chat/channels', {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
             });
+            if (res.status === 401) {
+                window.location.href = '/login.html';
+                return;
+            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            channels = (data.data || []).map(c => ({
+                id: c.id, name: c.name, topic: c.topic,
+                is_private: c.is_private || 0, creator_id: c.creator_id || 0,
+                unread: c.unread || 0
+            }));
         }
-        
-        // 渲染频道列表
+
+        async function markChannelRead(channelId) {
+            const msgs = messages[channelId] || [];
+            if (msgs.length === 0) return;
+            const lastId = msgs[msgs.length - 1].id;
+            try {
+                await fetch('/api/v1/chat/mark_read', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ channel_id: channelId, last_message_id: lastId })
+                });
+            } catch (e) {
+                console.warn('[chat] mark_read failed', e);
+            }
+        }
+
+        async function loadHistory(channelId) {
+            const res = await fetch(`/api/v1/chat/history?channel_id=${channelId}&limit=50`, {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+            if (!res.ok) {
+                messages[channelId] = [];
+                return;
+            }
+            const data = await res.json();
+            messages[channelId] = (data.data || []).map(normalizeMsg);
+        }
+
+        function channelById(channelId) {
+            return channels.find(c => c.id === channelId);
+        }
+
+        function syncWsChannelState() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            channels.forEach(channel => {
+                wsSend({ type: 'subscribe_channel', channel_id: channel.id }, { silent: true });
+            });
+            if (currentChannelId) {
+                wsSend({ type: 'switch_channel', channel_id: currentChannelId }, { silent: true });
+            }
+        }
+
+        function scheduleMarkChannelRead(channelId) {
+            if (!channelId) return;
+            if (markReadTimer) {
+                clearTimeout(markReadTimer);
+            }
+            markReadTimer = setTimeout(() => {
+                markReadTimer = null;
+                markChannelRead(channelId);
+            }, 300);
+        }
+
+        async function restoreChatStateAfterReconnect() {
+            await loadChannels();
+            if (channels.length === 0) {
+                currentChannelId = null;
+                renderChannels();
+                renderMessages();
+                updateChannelHeader();
+                return;
+            }
+
+            if (!currentChannelId || !channelById(currentChannelId)) {
+                currentChannelId = channels[0].id;
+            }
+
+            await loadHistory(currentChannelId);
+
+            const channel = channelById(currentChannelId);
+            if (channel) {
+                channel.unread = 0;
+            }
+
+            renderChannels();
+            renderMessages();
+            renderChannelUsers();
+            updateChannelHeader();
+
+            await markChannelRead(currentChannelId);
+            syncWsChannelState();
+        }
+
+        async function createChannelApi(name, topic, isPrivate = false) {
+            const res = await fetch('/api/v1/chat/channel', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ name, topic, is_private: isPrivate ? 1 : 0 })
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.message || '创建失败');
+            return data.data;
+        }
+
+        // 将后端消息格式规范化为前端使用格式
+        function normalizeMsg(m) {
+            return {
+                id: m.id,
+                channel_id: m.channel_id,
+                userId: m.user_id,
+                userName: m.user_name,
+                text: m.text,
+                time: m.time,
+                reactions: m.reactions || []
+            };
+        }
+
+        let reconnectAttempts = 0;
+        const maxReconnectDelay = 30000;
+
+        // ========== WebSocket ==========
+        function connectWebSocket() {
+            if (ws) {
+                try { ws.close(); } catch (e) {}
+                ws = null;
+            }
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = `${proto}//${location.host}/ws/chat?token=${encodeURIComponent(accessToken)}`;
+            ws = new WebSocket(url);
+
+            ws.onopen = async () => {
+                console.log('[chat] ws connected');
+                reconnectAttempts = 0;
+                updateConnectionStatus('connected');
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+
+                try {
+                    await restoreChatStateAfterReconnect();
+                } catch (e) {
+                    console.error('[chat] restore after reconnect failed', e);
+                }
+            };
+
+            ws.onmessage = (ev) => {
+                let msg;
+                try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                handleWsMessage(msg);
+            };
+
+            ws.onclose = () => {
+                const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
+                reconnectAttempts++;
+                console.log(`[chat] ws closed, reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+                updateConnectionStatus('reconnecting');
+                if (!reconnectTimer) {
+                    reconnectTimer = setTimeout(connectWebSocket, delay);
+                }
+            };
+
+            ws.onerror = (e) => {
+                console.error('[chat] ws error', e);
+            };
+        }
+
+        function updateConnectionStatus(status) {
+            const header = document.getElementById('current-channel-topic');
+            if (!header) return;
+            const channel = channels.find(c => c.id === currentChannelId);
+            const topic = channel ? channel.topic : '';
+            if (status === 'reconnecting') {
+                header.textContent = '重新连接中...';
+                header.style.color = '#d1453b';
+                if (sendBtn) sendBtn.disabled = true;
+            } else {
+                header.textContent = topic;
+                header.style.color = '';
+                if (sendBtn) sendBtn.disabled = false;
+            }
+        }
+
+        function handleWsMessage(msg) {
+            switch (msg.type) {
+                case 'hello':
+                    onlineUsers = msg.online || [];
+                    renderOnlineUsers();
+                    renderChannelUsers();
+                    break;
+
+                case 'message': {
+                    const m = normalizeMsg(msg.msg);
+                    if (!messages[m.channel_id]) messages[m.channel_id] = [];
+                    messages[m.channel_id].push(m);
+                    if (m.channel_id === currentChannelId) {
+                        messageLoadCount++;
+                        appendSingleMessage(m);
+                        scheduleMarkChannelRead(currentChannelId);
+                    } else {
+                        const ch = channelById(m.channel_id);
+                        if (ch) {
+                            ch.unread = (ch.unread || 0) + 1;
+                            renderChannels();
+                        }
+                    }
+                    break;
+                }
+
+                case 'channel_activity': {
+                    if (msg.channel_id === currentChannelId) break;
+                    const ch = channelById(msg.channel_id);
+                    if (ch) {
+                        ch.unread = (ch.unread || 0) + (msg.unread_delta || 1);
+                        renderChannels();
+                    }
+                    break;
+                }
+
+                case 'presence_join':
+                    if (msg.user && !onlineUsers.find(u => u.id === msg.user.id)) {
+                        onlineUsers.push(msg.user);
+                        renderOnlineUsers();
+                        renderChannelUsers();
+                    }
+                    break;
+
+                case 'presence_leave':
+                    onlineUsers = onlineUsers.filter(u => u.id !== msg.user_id);
+                    renderOnlineUsers();
+                    renderChannelUsers();
+                    break;
+
+                case 'online_update':
+                    onlineUsers = msg.online || [];
+                    renderOnlineUsers();
+                    renderChannelUsers();
+                    break;
+
+                case 'reaction_update': {
+                    const chId = msg.channel_id || currentChannelId;
+                    const channelMessages = messages[chId] || [];
+                    const msgObj = channelMessages.find(m => m.id === msg.message_id);
+                    if (msgObj) {
+                        msgObj.reactions = msg.reactions || [];
+                        if (chId === currentChannelId) {
+                            renderMessages();
+                        }
+                    }
+                    break;
+                }
+
+                case 'message_edited': {
+                    const chId = msg.channel_id || currentChannelId;
+                    const channelMessages = messages[chId] || [];
+                    const msgObj = channelMessages.find(m => m.id === msg.message_id);
+                    if (msgObj) {
+                        msgObj.text = msg.text;
+                        msgObj.edited = true;
+                        if (chId === currentChannelId) {
+                            renderMessages();
+                        }
+                    }
+                    break;
+                }
+
+                case 'message_deleted': {
+                    const chId = msg.channel_id;
+                    if (messages[chId]) {
+                        messages[chId] = messages[chId].filter(m => m.id !== msg.message_id);
+                        if (chId === currentChannelId) {
+                            renderMessages();
+                        }
+                    }
+                    break;
+                }
+
+                case 'typing': {
+                    if (msg.user_id !== currentUser.id && msg.channel_id === currentChannelId) {
+                        showTypingIndicator(msg.user_name);
+                    }
+                    break;
+                }
+
+                case 'error':
+                    console.error('[chat] server error:', msg.msg);
+                    break;
+            }
+        }
+
+        function wsSend(obj, options = {}) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                if (!options.silent) {
+                    alert('连接已断开，正在重连...');
+                }
+                return false;
+            }
+            ws.send(JSON.stringify(obj));
+            return true;
+        }
+
+        // ========== 渲染：频道列表 ==========
         function renderChannels() {
             channelList.innerHTML = '';
-
             channels.forEach(channel => {
                 const li = document.createElement('li');
                 li.className = `channel-item ${channel.id === currentChannelId ? 'active' : ''}`;
                 li.dataset.channelId = channel.id;
-
-                let actionBtn = '';
-                if (channel.joined) {
-                    actionBtn = `<button class="channel-action" data-action="leave" data-channel-id="${channel.id}">×</button>`;
-                } else {
-                    actionBtn = `<button class="channel-action" data-action="join" data-channel-id="${channel.id}">+</button>`;
-                }
-
+                const icon = channel.is_private ? 'fa-lock' : 'fa-hashtag';
                 li.innerHTML = `
-                    <i class="fas fa-hashtag"></i>
-                    <span class="channel-item-text">${channel.name}</span>
-                    ${channel.unread > 0 && channel.joined ? `<span class="mention-badge">${channel.unread}</span>` : ''}
-                    ${actionBtn}
+                    <i class="fas ${icon}"></i>
+                    <span class="channel-item-text">${escapeHtml(channel.name)}</span>
+                    ${channel.unread > 0 ? `<span class="mention-badge">${channel.unread}</span>` : ''}
                 `;
-
-                li.addEventListener('click', (e) => {
-                    if (e.target.classList.contains('channel-action')) return; // 不触发切换
-                    switchChannel(channel.id);
-                });
-
+                li.addEventListener('click', () => switchChannel(channel.id));
                 channelList.appendChild(li);
             });
         }
-        
-        // 渲染用户列表
-        function renderUsers() {
+
+        // ========== 渲染：在线成员（左栏） ==========
+        function renderOnlineUsers() {
             userList.innerHTML = '';
-            
-            // 显示所有在线用户（包括自己）
-            const onlineUsers = users.filter(user => user.online);
-            
             onlineUsers.forEach(user => {
                 const li = document.createElement('li');
                 li.className = 'user-item';
                 li.dataset.userId = user.id;
-                
-                // 如果是当前用户，显示特殊的@提及数量
-                const mentionCount = user.id === currentUser.id ? user.mentions : 0;
-                
+                const color = colorForUserId(user.id);
+                const avatar = avatarForName(user.name);
                 li.innerHTML = `
-                    <div class="user-avatar" style="background-color: ${user.color};">${user.avatar}</div>
-                    <div class="user-item-text">${user.name}</div>
-                    ${mentionCount > 0 ? `<span class="mention-badge">${mentionCount}</span>` : ''}
+                    <div class="user-avatar" style="background-color: ${color};">${avatar}</div>
+                    <div class="user-item-text">${escapeHtml(user.name)}</div>
                 `;
-                
                 li.addEventListener('click', () => {
-                    if (user.id === currentUser.id) {
-                        // 点击自己，清除@提及数量
-                        user.mentions = 0;
-                        renderUsers();
-                    } else {
-                        startDirectMessage(user.id);
+                    if (user.id !== currentUser.id) {
+                        alert(`私信 ${user.name} 功能暂未开放`);
                     }
                 });
-                
                 userList.appendChild(li);
             });
         }
-        
-        // 渲染当前频道的在线用户列表
+
+        // ========== 渲染：右侧频道成员 ==========
         function renderChannelUsers() {
             channelUsersList.innerHTML = '';
-            
-            // 只显示当前频道的在线成员
-            const currentChannelMembers = users.filter(user => 
-                user.online && user.joinedChannels.includes(currentChannelId)
-            );
-            
-            currentChannelMembers.forEach(user => {
+            onlineUsers.forEach(user => {
                 const div = document.createElement('div');
                 div.className = 'channel-user-item';
                 div.dataset.userId = user.id;
-                
+                const color = colorForUserId(user.id);
+                const avatar = avatarForName(user.name);
                 div.innerHTML = `
-                    <div class="channel-user-avatar" style="background-color: ${user.color};">${user.avatar}</div>
-                    <div class="channel-user-name">${user.name}</div>
+                    <div class="channel-user-avatar" style="background-color: ${color};">${avatar}</div>
+                    <div class="channel-user-name">${escapeHtml(user.name)}</div>
                 `;
-                
-                div.addEventListener('click', () => {
-                    if (user.id === currentUser.id) {
-                        // 点击自己，清除@提及数量
-                        user.mentions = 0;
-                        renderUsers();
-                    } else {
-                        startDirectMessage(user.id);
-                    }
-                });
-                
                 channelUsersList.appendChild(div);
             });
         }
 
-        // 渲染消息
+        // ========== 渲染：消息 ==========
         function renderMessages() {
             chatMessages.innerHTML = '';
-            
             const channelMessages = messages[currentChannelId] || [];
             const startIndex = Math.max(0, channelMessages.length - messageLoadCount);
             const messagesToShow = channelMessages.slice(startIndex);
-            
-            // 添加"阅读更多消息"按钮（在顶部显示旧消息）
+
             if (startIndex > 0) {
                 const loadMoreDiv = document.createElement('div');
                 loadMoreDiv.className = 'load-more';
-                // 修改计数逻辑，确保新消息不影响计数
-                const remainingMessages = Math.max(0, channelMessages.length - messageLoadCount);
-                loadMoreDiv.textContent = `阅读更多消息 (${remainingMessages} 条)`;
-                loadMoreDiv.addEventListener('click', loadMoreMessages);
+                loadMoreDiv.textContent = `阅读更多消息 (${startIndex} 条)`;
+                loadMoreDiv.addEventListener('click', () => {
+                    messageLoadCount += 20;
+                    renderMessages();
+                });
                 chatMessages.appendChild(loadMoreDiv);
             }
-            
-            // 渲染每条消息
+
             messagesToShow.forEach(msg => {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message ${msg.userId === currentUser.id ? 'own-message' : ''}`;
-                
-                const user = users.find(u => u.id === msg.userId);
-                
-                messageDiv.innerHTML = `
-                    <div class="message-avatar" style="background-color: ${user?.color || '#ddd'};">${user?.avatar || '?'}</div>
-                    <div class="message-content">
-                        <div class="message-header">
-                            <div class="message-user">${msg.userName}</div>
-                            <div class="message-time">${msg.time}</div>
-                        </div>
-                        <div class="message-text">${formatMessageText(msg.text)}</div>
-                        ${msg.reactions && msg.reactions.length > 0 ? 
-                            `<div class="reactions-container">
-                                ${msg.reactions.map(r => `
-                                    <span class="emoji-reaction ${r.users && r.users.includes(currentUser.id) ? 'reacted' : ''}" 
-                                        data-message-id="${msg.id}" 
-                                        data-emoji="${r.emoji}">
-                                        ${r.emoji} ${r.count}
-                                    </span>
-                                `).join('')}
-                            </div>` : ''
-                        }
-                        <div class="message-actions">
-                            <button class="message-action react-btn" data-message-id="${msg.id}">
-                                <i class="far fa-smile"></i> 表情
-                            </button>
-                            <button class="message-action" data-action="reply" data-message-id="${msg.id}">回复</button>
-                        </div>
-                    </div>
-                `;
-                                        
-                chatMessages.appendChild(messageDiv);
+                chatMessages.appendChild(buildMessageElement(msg));
             });
-            
-            // 滚动到底部（最新消息位置）
+
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        function loadMoreMessages() {
-            messageLoadCount += 12; // 每次最多加载12条
-            renderMessages();
+        // 构建单条消息 DOM 元素
+        function buildMessageElement(msg) {
+            const isOwn = msg.userId === currentUser.id;
+            const color = colorForUserId(msg.userId);
+            const avatar = avatarForName(msg.userName);
 
-            chatMessages.scrollTop = 0;
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own-message' : ''}`;
+            messageDiv.dataset.messageId = msg.id;
+
+            let reactionsHtml = '';
+            if (msg.reactions && msg.reactions.length > 0) {
+                reactionsHtml = `<div class="reactions-container">${msg.reactions.map(r => {
+                    const reacted = r.users && r.users.includes(currentUser.id);
+                    return `<span class="emoji-reaction ${reacted ? 'reacted' : ''}" data-message-id="${msg.id}" data-emoji="${escapeAttr(r.emoji)}">${r.emoji} ${r.count}</span>`;
+                }).join('')}</div>`;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar" style="background-color: ${color};">${avatar}</div>
+                <div class="message-content">
+                    <div class="message-header">
+                        <div class="message-user">${escapeHtml(msg.userName)}</div>
+                        <div class="message-time">${escapeHtml(msg.time || '')}${msg.edited ? ' (已编辑)' : ''}</div>
+                    </div>
+                    <div class="message-text">${formatMessageText(msg.text)}</div>
+                    ${reactionsHtml}
+                    <div class="message-actions">
+                        <button class="message-action react-btn" data-message-id="${msg.id}">
+                            <i class="far fa-smile"></i> 表情
+                        </button>
+                        <button class="message-action" data-action="reply" data-message-id="${msg.id}">回复</button>
+                        ${isOwn ? `<button class="message-action" data-action="edit" data-message-id="${msg.id}">编辑</button>` : ''}
+                        ${isOwn ? `<button class="message-action" data-action="delete" data-message-id="${msg.id}" style="color:#d1453b;">删除</button>` : ''}
+                    </div>
+                </div>
+            `;
+            return messageDiv;
         }
-        
-        // 格式化消息文本，处理@提及和URL
+
+        // 增量追加单条消息（避免全量重建 DOM）
+        function appendSingleMessage(msg) {
+            const el = buildMessageElement(msg);
+            chatMessages.appendChild(el);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function updateChannelHeader() {
+            const channel = channels.find(c => c.id === currentChannelId);
+            if (channel) {
+                currentChannelName.textContent = `# ${channel.name}`;
+                currentChannelTopic.textContent = channel.topic;
+            }
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function escapeAttr(s) {
+            return escapeHtml(s);
+        }
+
+        // 格式化消息文本（@提及、URL）
         function formatMessageText(text) {
-            let formatted = text;
-            
-            // 处理@当前用户（自己）的提及 - 用绿色
-            formatted = formatted.replace(/@You\s*\(\s*您\s*\)/g, '<span class="mention-self">@You (您)</span>');
-            
-            // 处理@其他用户的提及 - 用浅黄色
-            // 先匹配全名（如 "Alex Johnson"）
-            formatted = formatted.replace(/@(\w+\s+\w+)/g, function(match, userName) {
-                // 检查是否提到当前用户
-                if (userName.includes("You") || userName.includes("您")) {
-                    return '<span class="mention-self">@' + userName + '</span>';
-                }
-                return '<span class="mention-other">@' + userName + '</span>';
+            let formatted = escapeHtml(text);
+            // 图片 markdown: ![alt](url)
+            formatted = formatted.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+                // 校验 URL 协议，防止 javascript: 等 XSS
+                const decodedUrl = url.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+                if (!/^(https?:\/\/|\/)/i.test(decodedUrl)) return match;
+                return `<img src="${url}" alt="${alt}" style="max-width:400px; max-height:300px; border-radius:6px; cursor:pointer; display:block; margin:4px 0;" onclick="window.open('${url}','_blank')">`;
             });
-            
-            // 再匹配单名（如 "Alex"）
-            formatted = formatted.replace(/@(\w+)/g, function(match, userName) {
-                // 检查是否提到当前用户
-                if (userName === "You") {
-                    return '<span class="mention-self">@' + userName + '</span>';
-                }
-                return '<span class="mention-other">@' + userName + '</span>';
+            // @提及：匹配 @开头、非空白的连续字符
+            formatted = formatted.replace(/@([\u4e00-\u9fa5\w]+(?:\s[\u4e00-\u9fa5\w]+)?)/g, (match, name) => {
+                const isSelf = name === currentUser.name || name.startsWith(currentUser.name);
+                const cls = isSelf ? 'mention-self' : 'mention-other';
+                return `<span class="${cls}">@${name}</span>`;
             });
-            
-            // 处理URL（简单版本）
-            formatted = formatted.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>');
-            
+            // URL
+            formatted = formatted.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
             return formatted;
         }
-        
-        // 切换频道
-        function switchChannel(channelId) {
-            // const targetChannel = channels.find(c => c.id === channelId);
-            // if (!targetChannel || !targetChannel.joined) {
-            //     alert("你尚未加入该频道！");
-            //     return;
-            // }
+
+        // ========== 切换频道 ==========
+        async function switchChannel(channelId) {
+            if (!channelId) return;
             currentChannelId = channelId;
-            messageLoadCount = 12;
-            
-            // 更新频道列表的活跃状态
-            document.querySelectorAll('.channel-item').forEach(item => {
-                item.classList.remove('active');
-                if (parseInt(item.dataset.channelId) === channelId) {
-                    item.classList.add('active');
-                }
-            });
-            
-            // 更新当前频道信息
-            const channel = channels.find(c => c.id === channelId);
-            currentChannelName.textContent = `# ${channel.name}`;
-            currentChannelTopic.textContent = channel.topic;
-            
-            // 重置频道的未读消息数
-            channel.unread = 0;
-            
-            // 重新渲染消息和右侧用户列表
+            messageLoadCount = 50;
+
+            // 退出搜索模式
+            if (isSearchMode) clearSearch();
+
+            await loadHistory(channelId);
+
+            const channel = channelById(channelId);
+            if (channel) channel.unread = 0;
+
+            updateChannelHeader();
+            renderChannels();
             renderMessages();
             renderChannelUsers();
-            renderChannels();
+
+            // 标记已读
+            await markChannelRead(channelId);
+            wsSend({ type: 'switch_channel', channel_id: channelId }, { silent: true });
         }
-        
-        // 开始私信
-        function startDirectMessage(userId) {
-            const user = users.find(u => u.id === userId);
-            alert(`开始与 ${user.name} 的私信（此功能为演示）`);
-        }
-        
-        // 发送消息
+
+        // ========== 发送消息 ==========
+        const MAX_MESSAGE_LENGTH = 2000;
+
         function sendMessage() {
             const text = chatInput.value.trim();
             if (!text) return;
-
-            // 检查当前用户是否加入了当前频道
-            if (!currentUser.joinedChannels.includes(currentChannelId)) {
-                alert("您尚未加入该频道，无法发送消息！");
+            if (!currentChannelId) return;
+            if (text.length > MAX_MESSAGE_LENGTH) {
+                alert(`消息不能超过${MAX_MESSAGE_LENGTH}个字符`);
                 return;
             }
-            
-            // 创建新消息
-            const newMessage = {
-                id: Date.now(), // 简单ID生成
-                userId: currentUser.id,
-                userName: currentUser.name,
-                text: text,
-                time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-                reactions: []
-            };
-            
-            // 添加到当前频道的消息列表
-            if (!messages[currentChannelId]) {
-                messages[currentChannelId] = [];
-            }
-            messages[currentChannelId].push(newMessage);
-            messageLoadCount += 1;
-            
-            // 检查是否有@提及
-            checkMentions(text);
-            
-            // 清空输入框
-            chatInput.value = '';
-            
-            // 重新渲染消息
-            renderMessages();
-            
-            // 如果有@其他用户，增加频道的未读数
-            const mentionedUsers = extractMentionedUsers(text);
-            if (mentionedUsers.length > 0) {
-                const channel = channels.find(c => c.id === currentChannelId);
-                channel.unread++;
-                renderChannels();
+
+            const ok = wsSend({
+                type: 'message',
+                channel_id: currentChannelId,
+                text: text
+            });
+            if (ok) chatInput.value = '';
+        }
+
+        // ========== 打字指示器 ==========
+        let typingTimer = null;
+        let lastTypingSent = 0;
+        let typingIndicatorTimer = null;
+
+        function sendTypingEvent() {
+            const now = Date.now();
+            if (now - lastTypingSent < 3000) return; // 3秒节流
+            lastTypingSent = now;
+            if (currentChannelId) {
+                wsSend({ type: 'typing', channel_id: currentChannelId }, { silent: true });
             }
         }
-        
-        // 提取消息中提到的用户
-        function extractMentionedUsers(text) {
-            const mentionedUsers = [];
-            const mentionRegex = /@(\w+\s+\w+)|@(\w+)/g;
-            let match;
-            
-            while ((match = mentionRegex.exec(text)) !== null) {
-                const mentionedName = match[1] || match[2];
-                if (mentionedName && mentionedName !== 'You' && !mentionedName.includes('您')) {
-                    mentionedUsers.push(mentionedName);
-                }
-            }
-            
-            return mentionedUsers;
+
+        function showTypingIndicator(userName) {
+            const indicator = document.getElementById('typing-indicator');
+            if (!indicator) return;
+            indicator.textContent = `${userName} 正在输入...`;
+            indicator.style.display = 'block';
+            if (typingIndicatorTimer) clearTimeout(typingIndicatorTimer);
+            typingIndicatorTimer = setTimeout(() => {
+                indicator.style.display = 'none';
+            }, 3000);
         }
-        
-        // 检查消息中的@提及
-        function checkMentions(text) {
-            // 检查是否@了当前用户
-            const mentionRegex = /@You\s*\(\s*您\s*\)|@You/g;
-            if (mentionRegex.test(text)) {
-                currentUser.mentions++;
-                renderUsers();
-            }
-        }
-        
-        // 显示用户建议（当输入@时）
+
+        // ========== @提及建议 ==========
         function showUserSuggestions() {
             const cursorPos = chatInput.selectionStart;
             const textBeforeCursor = chatInput.value.substring(0, cursorPos);
             const lastAtPos = textBeforeCursor.lastIndexOf('@');
-            
-            // 如果光标前有@符号
+
             if (lastAtPos !== -1 && !textBeforeCursor.substring(lastAtPos).includes(' ')) {
                 const query = textBeforeCursor.substring(lastAtPos + 1).toLowerCase();
-                
-                // 过滤匹配的用户（不包括自己）
-                const matchedUsers = users.filter(user => 
-                    user.name.toLowerCase().includes(query) && user.id !== currentUser.id
+                const matched = onlineUsers.filter(u =>
+                    u.name.toLowerCase().includes(query) && u.id !== currentUser.id
                 );
-                
-                if (matchedUsers.length > 0) {
+
+                if (matched.length > 0) {
                     userSuggestions.innerHTML = '';
-                    matchedUsers.forEach(user => {
+                    matched.forEach(user => {
                         const div = document.createElement('div');
                         div.className = 'user-suggestion';
-                        div.dataset.userId = user.id;
-                        div.dataset.userName = user.name;
-                        
+                        const color = colorForUserId(user.id);
+                        const avatar = avatarForName(user.name);
                         div.innerHTML = `
-                            <div class="user-avatar" style="background-color: ${user.color}; margin-right: 10px;">${user.avatar}</div>
-                            <div>${user.name}</div>
+                            <div class="user-avatar" style="background-color: ${color}; margin-right: 10px;">${avatar}</div>
+                            <div>${escapeHtml(user.name)}</div>
                         `;
-                        
                         div.addEventListener('click', () => {
-                            const beforeAt = chatInput.value.substring(0, lastAtPos + 1);
-                            const afterCursor = chatInput.value.substring(cursorPos);
-                            chatInput.value = beforeAt + user.name + ' ' + afterCursor;
+                            const before = chatInput.value.substring(0, lastAtPos + 1);
+                            const after = chatInput.value.substring(cursorPos);
+                            chatInput.value = before + user.name + ' ' + after;
                             chatInput.focus();
-                            chatInput.selectionStart = chatInput.selectionEnd = beforeAt.length + user.name.length + 1;
+                            const newPos = before.length + user.name.length + 1;
+                            chatInput.selectionStart = chatInput.selectionEnd = newPos;
                             hideUserSuggestions();
                         });
-                        
                         userSuggestions.appendChild(div);
                     });
-                    
                     userSuggestions.style.display = 'block';
                     return;
                 }
             }
-            
-            // 如果没有匹配或不需要显示，则隐藏
             hideUserSuggestions();
         }
-        
-        // 隐藏用户建议
+
         function hideUserSuggestions() {
             userSuggestions.style.display = 'none';
         }
-        
-        // 显示表情选择器
+
+        // ========== Emoji 选择器 ==========
         function showEmojiPicker() {
             if (emojiPicker.style.display === 'grid') {
                 emojiPicker.style.display = 'none';
                 return;
             }
-            
             emojiPicker.innerHTML = '';
-            
-            // 添加常用表情
-            commonEmojis.forEach(emoji => {
+            chatCommonEmojis.forEach(emoji => {
                 const span = document.createElement('span');
                 span.className = 'emoji-item';
                 span.textContent = emoji;
@@ -1219,320 +1478,258 @@
                 });
                 emojiPicker.appendChild(span);
             });
-            
-            // 设置表情框的位置在表情按钮下方
             const rect = emojiBtn.getBoundingClientRect();
             const containerRect = document.querySelector('.chat-input-container').getBoundingClientRect();
-            
-            // 设置表情框的位置
             emojiPicker.style.position = 'absolute';
             emojiPicker.style.bottom = `${containerRect.bottom - rect.top}px`;
             emojiPicker.style.right = `${containerRect.right - rect.right}px`;
-            
             emojiPicker.style.display = 'grid';
         }
-        
-        // 在光标位置插入文本
+
         function insertAtCursor(text) {
             const start = chatInput.selectionStart;
             const end = chatInput.selectionEnd;
-            const before = chatInput.value.substring(0, start);
-            const after = chatInput.value.substring(end);
-            
-            chatInput.value = before + text + after;
+            chatInput.value = chatInput.value.substring(0, start) + text + chatInput.value.substring(end);
             chatInput.focus();
             chatInput.selectionStart = chatInput.selectionEnd = start + text.length;
         }
-        
-        // 创建新频道
-        function createNewChannel() {
-            const channelName = prompt('请输入新频道名称:');
-            if (!channelName) return;
-            
-            const channelTopic = prompt('请输入频道主题:');
-            
-            const newChannel = {
-                id: channels.length + 1,
-                name: channelName,
-                topic: channelTopic || '新创建的频道',
-                unread: 0
-            };
-            
-            channels.push(newChannel);
-            messages[newChannel.id] = [];
-            
-            renderChannels();
-            switchChannel(newChannel.id);
-        }
 
-        // 添加新的函数：显示表情选择器
-function showReactionPicker(messageId, buttonElement) {
-    // 先隐藏所有其他的表情选择器
-    document.querySelectorAll('.reaction-picker').forEach(picker => {
-        picker.style.display = 'none';
-    });
-    
-    // 创建或显示表情选择器
-    let picker = document.getElementById(`reaction-picker-${messageId}`);
-    
-    if (!picker) {
-        picker = document.createElement('div');
-        picker.className = 'reaction-picker';
-        picker.id = `reaction-picker-${messageId}`;
-        
-        // 常用表情列表
-        const commonReactions = ["👍", "❤️", "😂", "😮", "😢", "😡", "👏", "🙏", "🔥", "🎉", "🚀", "💡", "👀", "✅", "❌"];
-        
-        // 添加表情到选择器
-        commonReactions.forEach(emoji => {
-            const emojiSpan = document.createElement('span');
-            emojiSpan.className = 'reaction-emoji';
-            emojiSpan.textContent = emoji;
-            emojiSpan.dataset.messageId = messageId;
-            emojiSpan.dataset.emoji = emoji;
-            
-            // 直接为表情元素添加点击事件监听器
-            emojiSpan.addEventListener('click', () => {
-                addReaction(messageId, emoji);
-                // 隐藏表情选择器
-                picker.style.display = 'none';
-            });
-            
-            picker.appendChild(emojiSpan);
-        });
-        
-        // 将选择器添加到body
-        document.body.appendChild(picker);
-    }
-    
-    // 定位选择器到按钮旁边
-    const rect = buttonElement.getBoundingClientRect();
-    picker.style.position = 'fixed';
-    picker.style.top = `${rect.top - 120}px`;
-    picker.style.left = `${rect.left}px`;
-    
-    // 切换显示/隐藏
-    picker.style.display = picker.style.display === 'grid' ? 'none' : 'grid';
-    
-    // 点击其他地方时隐藏表情选择器
-    const hidePicker = (e) => {
-        if (!picker.contains(e.target) && !buttonElement.contains(e.target)) {
-            picker.style.display = 'none';
-            document.removeEventListener('click', hidePicker);
-        }
-    };
-    
-    setTimeout(() => {
-        document.addEventListener('click', hidePicker);
-    }, 0);
-}
-
-// 添加新的函数：添加反应
-function addReaction(messageId, emoji) {
-    const channelMsgs = messages[currentChannelId];
-    const msg = channelMsgs.find(m => m.id === messageId);
-    
-    if (!msg) return;
-    
-    if (!msg.reactions) {
-        msg.reactions = [];
-    }
-    
-    const existingReaction = msg.reactions.find(r => r.emoji === emoji);
-    
-    if (existingReaction) {
-        // 检查当前用户是否已经反应过
-        if (!existingReaction.users) {
-            existingReaction.users = [];
-        }
-        
-        if (!existingReaction.users.includes(currentUser.id)) {
-            existingReaction.count++;
-            existingReaction.users.push(currentUser.id);
-        }
-    } else {
-        // 创建新的反应
-        msg.reactions.push({
-            emoji: emoji,
-            count: 1,
-            users: [currentUser.id]
-        });
-    }
-    
-    renderMessages();
-}
-
-function toggleReaction(messageId, emoji) {
-    const channelMsgs = messages[currentChannelId];
-    const msg = channelMsgs.find(m => m.id === messageId);
-    
-    if (!msg) return;
-    
-    if (!msg.reactions) {
-        msg.reactions = [];
-    }
-    
-    const existingReaction = msg.reactions.find(r => r.emoji === emoji);
-    
-    if (existingReaction) {
-        // 检查当前用户是否已经反应过
-        if (!existingReaction.users) {
-            existingReaction.users = [];
-        }
-        
-        const userIndex = existingReaction.users.indexOf(currentUser.id);
-        if (userIndex > -1) {
-            // 用户已经反应过，取消反应
-            existingReaction.count--;
-            existingReaction.users.splice(userIndex, 1);
-            
-            if (existingReaction.count === 0) {
-                // 如果没有其他人反应了，移除这个反应
-                const reactionIndex = msg.reactions.indexOf(existingReaction);
-                msg.reactions.splice(reactionIndex, 1);
+        // ========== 创建新频道 ==========
+        async function createNewChannel() {
+            const name = prompt('请输入新频道名称:');
+            if (!name) return;
+            const topic = prompt('请输入频道主题:') || '新创建的频道';
+            const isPrivate = confirm('是否设为私有频道？（仅邀请成员可见）');
+            try {
+                const ch = await createChannelApi(name, topic, isPrivate);
+                channels.push({
+                    id: ch.id, name: ch.name, topic: ch.topic,
+                    is_private: ch.is_private, creator_id: ch.creator_id, unread: 0
+                });
+                renderChannels();
+                await switchChannel(ch.id);
+            } catch (e) {
+                alert('创建频道失败：' + e.message);
             }
-        } else {
-            // 用户还没有反应过，添加反应
-            existingReaction.count++;
-            existingReaction.users.push(currentUser.id);
         }
-    } else {
-        // 创建新的反应
-        msg.reactions.push({
-            emoji: emoji,
-            count: 1,
-            users: [currentUser.id]
-        });
-    }
-    
-    renderMessages();
-}
-        
-        // 设置事件监听器
+
+        // ========== 表情反应 ==========
+        function showReactionPicker(messageId, buttonElement) {
+            document.querySelectorAll('.reaction-picker').forEach(p => p.style.display = 'none');
+
+            let picker = document.getElementById(`reaction-picker-${messageId}`);
+            if (!picker) {
+                picker = document.createElement('div');
+                picker.className = 'reaction-picker';
+                picker.id = `reaction-picker-${messageId}`;
+                const common = ["👍", "❤️", "😂", "😮", "😢", "😡", "👏", "🙏", "🔥", "🎉", "🚀", "💡", "👀", "✅", "❌"];
+                common.forEach(emoji => {
+                    const span = document.createElement('span');
+                    span.className = 'reaction-emoji';
+                    span.textContent = emoji;
+                    span.addEventListener('click', () => {
+                        toggleReaction(messageId, emoji);
+                        picker.style.display = 'none';
+                    });
+                    picker.appendChild(span);
+                });
+                document.body.appendChild(picker);
+            }
+
+            const rect = buttonElement.getBoundingClientRect();
+            picker.style.position = 'fixed';
+            picker.style.top = `${rect.top - 120}px`;
+            picker.style.left = `${rect.left}px`;
+            picker.style.display = picker.style.display === 'grid' ? 'none' : 'grid';
+
+            const hide = (e) => {
+                if (!picker.contains(e.target) && !buttonElement.contains(e.target)) {
+                    picker.style.display = 'none';
+                    document.removeEventListener('click', hide);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', hide), 0);
+        }
+
+        function toggleReaction(messageId, emoji) {
+            wsSend({ type: 'react', message_id: messageId, emoji: emoji });
+        }
+
+        // ========== 消息搜索 ==========
+        let isSearchMode = false;
+        let savedMessages = null;
+
+        async function searchMessages() {
+            const searchInput = document.getElementById('chat-search-input');
+            const clearBtn = document.getElementById('chat-search-clear');
+            const q = searchInput.value.trim();
+            if (!q) return;
+
+            try {
+                const url = `/api/v1/chat/search?q=${encodeURIComponent(q)}&channel_id=${currentChannelId || ''}`;
+                const res = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + accessToken }
+                });
+                if (!res.ok) throw new Error('搜索失败');
+                const data = await res.json();
+                const results = (data.data || []).map(normalizeMsg);
+
+                // 保存当前消息，切换到搜索模式
+                if (!isSearchMode) {
+                    savedMessages = { ...messages };
+                    isSearchMode = true;
+                }
+                messages[currentChannelId] = results;
+                messageLoadCount = results.length;
+                renderMessages();
+                clearBtn.style.display = 'inline-block';
+            } catch (e) {
+                alert('搜索失败：' + e.message);
+            }
+        }
+
+        function clearSearch() {
+            const searchInput = document.getElementById('chat-search-input');
+            const clearBtn = document.getElementById('chat-search-clear');
+            searchInput.value = '';
+            clearBtn.style.display = 'none';
+            if (isSearchMode && savedMessages) {
+                messages = savedMessages;
+                savedMessages = null;
+                isSearchMode = false;
+                messageLoadCount = 50;
+                renderMessages();
+            }
+        }
+
+        // ========== 事件监听 ==========
         function setupEventListeners() {
-            // 发送消息
             sendBtn.addEventListener('click', sendMessage);
-            
-            // 按Enter发送消息，Shift+Enter换行
+
             chatInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
                 }
-                
-                // 当输入@时显示用户建议
-                if (e.key === '@') {
-                    setTimeout(showUserSuggestions, 10);
-                }
+                if (e.key === '@') setTimeout(showUserSuggestions, 10);
             });
-            
-            // 输入时检查是否需要显示用户建议
-            chatInput.addEventListener('input', showUserSuggestions);
-            
-            // 点击其他地方时隐藏用户建议
+            chatInput.addEventListener('input', () => {
+                showUserSuggestions();
+                sendTypingEvent();
+            });
+
             document.addEventListener('click', (e) => {
                 if (!userSuggestions.contains(e.target) && e.target !== chatInput) {
                     hideUserSuggestions();
                 }
             });
-            
-            // 表情按钮
+
             emojiBtn.addEventListener('click', showEmojiPicker);
-            
-            // 点击其他地方时隐藏表情选择器
             document.addEventListener('click', (e) => {
                 if (!emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
                     emojiPicker.style.display = 'none';
                 }
             });
-            
-            // 图片上传按钮
+
             imageBtn.addEventListener('click', () => {
-                alert('图片上传功能为演示用途');
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = 'image/*';
+                fileInput.addEventListener('change', async () => {
+                    const file = fileInput.files[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) {
+                        alert('文件大小不能超过5MB');
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        try {
+                            const res = await fetch('/api/v1/chat/upload', {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': 'Bearer ' + accessToken,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ filename: file.name, file_data: base64 })
+                            });
+                            const data = await res.json();
+                            if (!data.success) throw new Error(data.message || '上传失败');
+                            // 发送图片消息
+                            wsSend({
+                                type: 'message',
+                                channel_id: currentChannelId,
+                                text: `![${file.name}](${data.data.url})`
+                            });
+                        } catch (e) {
+                            alert('上传失败：' + e.message);
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                });
+                fileInput.click();
             });
-            
-            // 添加频道按钮
+
             addChannelBtn.addEventListener('click', createNewChannel);
-            
-            // 消息操作（反应、回复）
+
+            // 搜索事件
+            const searchBtn = document.getElementById('chat-search-btn');
+            const searchInput = document.getElementById('chat-search-input');
+            const searchClearBtn = document.getElementById('chat-search-clear');
+            if (searchBtn) searchBtn.addEventListener('click', searchMessages);
+            if (searchInput) searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchMessages();
+            });
+            if (searchClearBtn) searchClearBtn.addEventListener('click', clearSearch);
+
             chatMessages.addEventListener('click', (e) => {
                 const target = e.target;
-                
-                // 处理表情按钮
+
                 if (target.classList.contains('react-btn') || target.closest('.react-btn')) {
-                    const reactBtn = target.classList.contains('react-btn') ? target : target.closest('.react-btn');
-                    const messageId = parseInt(reactBtn.dataset.messageId);
-                    showReactionPicker(messageId, reactBtn);
+                    const btn = target.classList.contains('react-btn') ? target : target.closest('.react-btn');
+                    const mid = parseInt(btn.dataset.messageId);
+                    showReactionPicker(mid, btn);
+                    return;
                 }
-                
-                // 处理表情选择器中的表情
-                if (target.classList.contains('reaction-emoji')) {
-                    const messageId = parseInt(target.dataset.messageId);
-                    const emoji = target.dataset.emoji;
-                    addReaction(messageId, emoji);
-                    // 隐藏表情选择器
-                    const picker = document.getElementById(`reaction-picker-${messageId}`);
-                    if (picker) picker.style.display = 'none';
-                }
-                
-                // 处理已有的表情反应
+
                 if (target.classList.contains('emoji-reaction')) {
-                    const messageId = parseInt(target.dataset.messageId);
+                    const mid = parseInt(target.dataset.messageId);
                     const emoji = target.dataset.emoji;
-                    toggleReaction(messageId, emoji);
+                    toggleReaction(mid, emoji);
+                    return;
                 }
-                
-                // 处理回复按钮
-                if (target.dataset.action === 'reply') {
-                    const messageId = parseInt(target.dataset.messageId);
-                    const channelMsgs = messages[currentChannelId];
-                    const msg = channelMsgs.find(m => m.id === messageId);
-                    
+
+                if (target.dataset && target.dataset.action === 'reply') {
+                    const mid = parseInt(target.dataset.messageId);
+                    const msg = (messages[currentChannelId] || []).find(m => m.id === mid);
                     if (msg) {
                         chatInput.value = `@${msg.userName} `;
                         chatInput.focus();
                     }
                 }
-            });
 
-            channelList.addEventListener('click', (e) => {
-                if (!e.target.classList.contains('channel-action')) return;
-                
-                const action = e.target.dataset.action;
-                const channelId = parseInt(e.target.dataset.channelId);
-                const channel = channels.find(c => c.id === channelId);
-                
-                if (!channel) return;
-
-                if (action === 'join') {
-                    channel.joined = true;
-                    // 更新当前用户的joinedChannels属性
-                    currentUser.joinedChannels.push(channelId);
-                    // 可选：发送一条系统消息或提示
-                    alert(`已加入频道 #${channel.name}`);
-                } else if (action === 'leave') {
-                    if (confirm(`确定要退出频道 #${channel.name}？`)) {
-                        channel.joined = false;
-                        // 更新当前用户的joinedChannels属性
-                        currentUser.joinedChannels = currentUser.joinedChannels.filter(id => id !== channelId);
-                        // 移除自动切换频道的逻辑，让用户保持在当前频道
-                        /*
-                        if (currentChannelId === channelId) {
-                            const firstJoined = channels.find(c => c.joined);
-                            if (firstJoined) {
-                                switchChannel(firstJoined.id);
-                            }
+                if (target.dataset && target.dataset.action === 'edit') {
+                    const mid = parseInt(target.dataset.messageId);
+                    const msg = (messages[currentChannelId] || []).find(m => m.id === mid);
+                    if (msg) {
+                        const newText = prompt('编辑消息:', msg.text);
+                        if (newText !== null && newText.trim() && newText !== msg.text) {
+                            wsSend({ type: 'edit_message', message_id: mid, text: newText.trim() });
                         }
-                        */
                     }
                 }
 
-                renderChannels();
-                renderChannelUsers(); // 确保退出频道后重新渲染频道用户列表
+                if (target.dataset && target.dataset.action === 'delete') {
+                    const mid = parseInt(target.dataset.messageId);
+                    if (confirm('确定要删除这条消息吗？')) {
+                        wsSend({ type: 'delete_message', message_id: mid });
+                    }
+                }
             });
         }
-        
-        // 初始化应用
+
+        // ========== 启动 ==========
         initApp();
     </script>
 </body>

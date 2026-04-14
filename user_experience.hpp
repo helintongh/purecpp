@@ -9,6 +9,18 @@ using namespace cinatra;
 
 namespace purecpp {
 
+struct purchase_privilege_request {
+  uint64_t privilege_id;
+};
+
+struct gift_user_request {
+  uint64_t receiver_id;
+  int64_t points_amount;
+  std::optional<uint64_t> article_id;
+  std::optional<uint64_t> comment_id;
+  std::optional<std::string> message;
+};
+
 /**
  * @brief 用户等级和积分管理类
  */
@@ -214,7 +226,7 @@ public:
    */
   static bool check_experience_limit(uint64_t user_id, int64_t experience_add,
                                      ExperienceChangeType change_type) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -278,7 +290,7 @@ public:
                  std::optional<uint64_t> related_id = std::nullopt,
                  std::optional<std::string> related_type = std::nullopt,
                  std::optional<std::string> description = std::nullopt) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -351,7 +363,7 @@ public:
                     std::optional<uint64_t> related_id = std::nullopt,
                     std::optional<std::string> related_type = std::nullopt,
                     std::optional<std::string> description = std::nullopt) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -414,7 +426,7 @@ public:
    * @return 操作是否成功
    */
   static bool get_user_level_info(uint64_t user_id, users_t &user_level_info) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -438,7 +450,7 @@ public:
    * @return 操作是否成功
    */
   static bool purchase_privilege(uint64_t user_id, uint64_t privilege_id) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -503,7 +515,7 @@ public:
                         std::optional<uint64_t> article_id = std::nullopt,
                         std::optional<uint64_t> comment_id = std::nullopt,
                         std::optional<std::string> message = std::nullopt) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return false;
     }
@@ -662,7 +674,7 @@ public:
     }
 
     // 查询经验值交易记录
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -728,9 +740,7 @@ public:
 
     // 解析请求体
     auto body = req.get_body();
-    struct purchase_info {
-      uint64_t privilege_id;
-    } info;
+    purchase_privilege_request info{};
 
     std::error_code ec;
     iguana::from_json(info, body, ec);
@@ -769,13 +779,7 @@ public:
 
     // 解析请求体
     auto body = req.get_body();
-    struct gift_info {
-      uint64_t receiver_id;
-      int64_t points_amount;
-      std::optional<uint64_t> article_id;
-      std::optional<uint64_t> comment_id;
-      std::optional<std::string> message;
-    } info;
+    gift_user_request info{};
 
     std::error_code ec;
     iguana::from_json(info, body, ec);
@@ -805,7 +809,7 @@ public:
    */
   void get_available_privileges(coro_http_request &req,
                                 coro_http_response &resp) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;

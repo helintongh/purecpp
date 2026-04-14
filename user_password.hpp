@@ -24,7 +24,7 @@ public:
         std::any_cast<change_password_info>(req.get_user_data());
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -75,7 +75,7 @@ public:
         std::any_cast<forgot_password_info>(req.get_user_data());
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       co_return;
@@ -108,7 +108,7 @@ public:
 
     // 安全地复制token，确保不溢出并添加null终止符
     std::copy_n(token.begin(),
-                std::min(token.size(), reset_token.token.size() - 1),
+                (std::min)(token.size(), reset_token.token.size() - 1),
                 reset_token.token.begin());
     reset_token.token[reset_token.token.size() - 1] = '\0';
 
@@ -148,7 +148,7 @@ public:
         std::any_cast<reset_password_info>(req.get_user_data());
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;

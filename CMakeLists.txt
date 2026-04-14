@@ -2,24 +2,60 @@ cmake_minimum_required(VERSION 3.15.0)
 project(purecpp VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(../cinatra/include)
-include_directories(../ormpp)
-include_directories(../iguana)
-
-set(ENABLE_MYSQL ON)
-add_definitions(-DORMPP_ENABLE_MYSQL)
-add_library(ormpp INTERFACE)
-include(../ormpp/cmake/mysql.cmake)
+set(PURECPP_CINATRA_DIR ../cinatra1/include)
+set(PURECPP_ORMPP_DIR ../ormpp)
+set(PURECPP_IGUANA_DIR ../iguana)
+set(PURECPP_SQLITE_DIR ../ormpp/thirdparty/sqlite3)
+set(PURECPP_DB_BACKEND "mysql" CACHE STRING "Database backend for purecpp")
+set_property(CACHE PURECPP_DB_BACKEND PROPERTY STRINGS sqlite mysql postgresql)
+string(TOLOWER "${PURECPP_DB_BACKEND}" PURECPP_DB_BACKEND_NORMALIZED)
 
 find_package(OpenSSL REQUIRED)
 
-target_link_libraries(ormpp INTERFACE ${MYSQL_LIBRARY})
-target_include_directories(ormpp INTERFACE ormpp ormpp/ormpp ${MYSQL_INCLUDE_DIR})
+set(PURECPP_TARGET_INCLUDE_DIRS
+    ${PURECPP_CINATRA_DIR}
+    ${PURECPP_ORMPP_DIR}
+    ${PURECPP_IGUANA_DIR}
+)
+set(PURECPP_TARGET_LIBRARIES
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+set(PURECPP_TARGET_DEFINITIONS
+    CINATRA_ENABLE_SSL
+)
+
+if(PURECPP_DB_BACKEND_NORMALIZED STREQUAL "sqlite")
+    add_library(ormpp_sqlite3 STATIC ${PURECPP_SQLITE_DIR}/sqlite3.c)
+    target_include_directories(ormpp_sqlite3 PUBLIC ${PURECPP_SQLITE_DIR})
+    list(APPEND PURECPP_TARGET_INCLUDE_DIRS ${PURECPP_SQLITE_DIR})
+    list(APPEND PURECPP_TARGET_LIBRARIES ormpp_sqlite3)
+    list(APPEND PURECPP_TARGET_DEFINITIONS PURECPP_DB_SQLITE)
+elseif(PURECPP_DB_BACKEND_NORMALIZED STREQUAL "mysql")
+    set(MYSQL_FIND_REQUIRED TRUE)
+    include(${PURECPP_ORMPP_DIR}/cmake/mysql.cmake)
+    list(APPEND PURECPP_TARGET_INCLUDE_DIRS ${MYSQL_INCLUDE_DIR})
+    list(APPEND PURECPP_TARGET_LIBRARIES ${MYSQL_LIBRARIES})
+    list(APPEND PURECPP_TARGET_DEFINITIONS PURECPP_DB_MYSQL ORMPP_ENABLE_MYSQL)
+elseif(PURECPP_DB_BACKEND_NORMALIZED STREQUAL "postgresql")
+    set(PGSQL_FIND_REQUIRED TRUE)
+    include(${PURECPP_ORMPP_DIR}/cmake/pgsql.cmake)
+    list(APPEND PURECPP_TARGET_INCLUDE_DIRS ${PGSQL_INCLUDE_DIR})
+    list(APPEND PURECPP_TARGET_LIBRARIES ${PGSQL_LIBRARIES})
+    list(APPEND PURECPP_TARGET_DEFINITIONS PURECPP_DB_POSTGRESQL ORMPP_ENABLE_PG)
+else()
+    message(FATAL_ERROR "Unsupported PURECPP_DB_BACKEND: ${PURECPP_DB_BACKEND}")
+endif()
 
 add_executable(purecpp feather.cpp)
-target_compile_options(purecpp PRIVATE -DCINATRA_ENABLE_SSL)
-target_link_libraries(purecpp ormpp OpenSSL::SSL OpenSSL::Crypto)
+target_compile_definitions(purecpp PRIVATE ${PURECPP_TARGET_DEFINITIONS})
+if(MSVC)
+    target_compile_options(purecpp PRIVATE /bigobj)
+endif()
+target_include_directories(purecpp PRIVATE ${PURECPP_TARGET_INCLUDE_DIRS})
+target_link_libraries(purecpp PRIVATE ${PURECPP_TARGET_LIBRARIES})
 
 # 复制 HTML 资源的函数
 function(copy_html_resources target_name)
@@ -68,3 +104,4 @@ copy_html_resources(purecpp)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Binary directory: ${CMAKE_BINARY_DIR}")
 message(STATUS "Source directory: ${CMAKE_SOURCE_DIR}")
+message(STATUS "Database backend: ${PURECPP_DB_BACKEND_NORMALIZED}")

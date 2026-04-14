@@ -749,7 +749,7 @@
         }
 
         // ========== 应用状态 ==========
-        let currentUser = null;         // {id, name, avatar, color}
+        let currentUser = null;         // {id, name, role, avatar, color}
         let currentChannelId = null;
         let channels = [];              // [{id, name, topic, unread}]
         let messages = {};              // channelId -> [msg]
@@ -776,6 +776,10 @@
         const addChannelBtn = document.getElementById('add-channel-btn');
         const channelUsersList = document.getElementById('channel-users-list');
 
+        function isChatAdmin() {
+            return currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+        }
+
         // ========== 初始化 ==========
         async function initApp() {
             // 从主系统获取 JWT token（与其他页面一致）
@@ -796,6 +800,7 @@
                 currentUser = {
                     id: userInfo.id,
                     name: userInfo.username,
+                    role: userInfo.role || 'user',
                     avatar: avatarForName(userInfo.username),
                     color: colorForUserId(userInfo.id)
                 };
@@ -833,6 +838,9 @@
                 profileAvatar.style.backgroundColor = currentUser.color;
             }
             if (profileName) profileName.textContent = currentUser.name;
+            if (addChannelBtn) {
+                addChannelBtn.style.display = isChatAdmin() ? 'inline-flex' : 'none';
+            }
 
             // 2. 拉取频道列表
             await loadChannels();
@@ -1496,6 +1504,10 @@
 
         // ========== 创建新频道 ==========
         async function createNewChannel() {
+            if (!isChatAdmin()) {
+                alert('仅管理员可创建频道');
+                return;
+            }
             const name = prompt('请输入新频道名称:');
             if (!name) return;
             const topic = prompt('请输入频道主题:') || '新创建的频道';

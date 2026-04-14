@@ -1838,6 +1838,18 @@ public:
 
   // POST /api/v1/chat/channel
   void create_channel(coro_http_request &req, coro_http_response &resp) {
+    auto creator_id = get_user_id_from_token(req);
+    if (creator_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized,
+                                  make_error("未授权"));
+      return;
+    }
+    if (!is_chat_admin(creator_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("仅管理员可创建频道", 403));
+      return;
+    }
+
     auto body = req.get_body();
     if (body.empty()) {
       resp.set_status_and_content(status_type::bad_request,
@@ -1866,7 +1878,7 @@ public:
     chat_channel_t ch{};
     str_to_arr(ch.name, ci.name);
     str_to_arr(ch.topic, ci.topic.empty() ? "新创建的频道" : ci.topic);
-    ch.creator_id = get_user_id_from_token(req);
+    ch.creator_id = creator_id;
     ch.is_private = ci.is_private ? 1 : 0;
     ch.created_at = get_timestamp_milliseconds();
     ch.message_count = 0;
@@ -2025,6 +2037,19 @@ public:
   }
 
 private:
+  bool is_chat_admin(uint64_t user_id) {
+    if (user_id == 0) return false;
+
+    auto conn = get_db_pool().get();
+    if (!conn) return false;
+
+    auto users = conn->query_s<users_t>("id = ?", user_id);
+    if (users.empty()) return false;
+
+    auto role = users[0].role;
+    return role == "admin" || role == "superadmin";
+  }
+
   bool user_can_access_channel(uint64_t user_id, uint64_t channel_id) {
     if (channel_id == 0) return false;
 

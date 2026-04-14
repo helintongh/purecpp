@@ -1837,14 +1837,13 @@ public:
     std::vector<chat_message_t> msgs;
     std::string like_pattern = "%" + escape_sql_like(q) + "%";
     if (ch_str.empty()) {
-      msgs = conn->query_s<chat_message_t>(
-          "content LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 100",
-          like_pattern);
+        msgs = conn->query_s<chat_message_t>(
+            "content LIKE ? ORDER BY created_at DESC LIMIT 100",
+            like_pattern);
     } else {
-      msgs = conn->query_s<chat_message_t>(
-          "channel_id = ? AND content LIKE ? ESCAPE '\\' "
-          "ORDER BY created_at DESC LIMIT 100",
-          channel_id, like_pattern);
+        msgs = conn->query_s<chat_message_t>(
+            "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
+            channel_id, like_pattern);
     }
 
     // Batch load reactions (avoid N+1)

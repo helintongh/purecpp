@@ -356,6 +356,13 @@
             overflow-wrap: anywhere;
         }
 
+        .message-revoked {
+            font-size: 13px;
+            color: rgba(255,255,255,0.35);
+            font-style: italic;
+            padding: 6px 12px;
+        }
+
         .message-text a {
             color: var(--accent-color);
         }
@@ -394,7 +401,7 @@
         .own-message .message-actions {
             justify-content: flex-end;
         }
-        
+
         .message-action {
             background: none;
             border: none;
@@ -404,10 +411,33 @@
             padding: 2px 6px;
             border-radius: 3px;
         }
-        
+
         .message-action:hover {
             background-color: var(--chat-hover-bg);
         }
+
+        .message-admin-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .admin-btn {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            border: 1px solid;
+            cursor: pointer;
+            background: transparent;
+            line-height: 1.6;
+        }
+
+        .admin-btn-revoke { color: #d1453b; border-color: #d1453b; }
+        .admin-btn-revoke:hover { background: rgba(209,69,59,0.12); }
+        .admin-btn-mute   { color: #e67e22; border-color: #e67e22; }
+        .admin-btn-mute:hover   { background: rgba(230,126,34,0.12); }
+        .admin-btn-unmute { color: #4caf50; border-color: #4caf50; }
+        .admin-btn-unmute:hover { background: rgba(76,175,80,0.12); }
         
         .emoji-reaction {
             background-color: var(--chat-hover-bg);
@@ -1186,9 +1216,20 @@
                 case 'message_deleted': {
                     const chId = msg.channel_id;
                     if (messages[chId]) {
-                        messages[chId] = messages[chId].filter(m => m.id !== msg.message_id);
+                        const msgObj = messages[chId].find(m => m.id === msg.message_id);
+                        if (msgObj) {
+                            msgObj.revoked = true;
+                            msgObj.revokedText = msgObj.userId === currentUser.id
+                                ? '你撤回了一条消息'
+                                : `${msgObj.userName} 撤回了一条消息`;
+                        }
                         if (chId === currentChannelId) {
-                            renderMessages();
+                            // 直接更新 DOM 对应元素，无需全量重渲染
+                            const el = chatMessages.querySelector(`[data-message-id="${msg.message_id}"]`);
+                            if (el && msgObj) {
+                                el.className = 'message';
+                                el.innerHTML = `<div class="message-revoked">${escapeHtml(msgObj.revokedText)}</div>`;
+                            }
                         }
                     }
                     break;
@@ -1279,8 +1320,11 @@
                     <div class="user-avatar" style="background-color: ${color};">${avatar}</div>
                     <div class="user-item-text">${escapeHtml(user.name)}</div>
                 `;
-                li.addEventListener('click', () => {
-                    if (user.id !== currentUser.id) {
+                li.addEventListener('click', (e) => {
+                    if (user.id === currentUser.id) return;
+                    if (isChatAdmin()) {
+                        showMuteMenu(user, li, e);
+                    } else {
                         alert(`私信 ${user.name} 功能暂未开放`);
                     }
                 });
@@ -1319,6 +1363,14 @@
 
         // 构建单条消息 DOM 元素
         function buildMessageElement(msg) {
+            if (msg.revoked) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message';
+                messageDiv.dataset.messageId = msg.id;
+                messageDiv.innerHTML = `<div class="message-revoked">${escapeHtml(msg.revokedText || '该消息已被撤回')}</div>`;
+                return messageDiv;
+            }
+
             const isOwn = msg.userId === currentUser.id;
             const color = colorForUserId(msg.userId);
             const avatar = avatarForName(msg.userName);
@@ -1351,7 +1403,10 @@
                             </button>
                             <button class="message-action" data-action="reply" data-message-id="${msg.id}">回复</button>
                             ${isOwn ? `<button class="message-action" data-action="edit" data-message-id="${msg.id}">编辑</button>` : ''}
-                            ${isOwn ? `<button class="message-action" data-action="delete" data-message-id="${msg.id}" style="color:#d1453b;">删除</button>` : ''}
+                            ${isOwn ? `<button class="message-action" data-action="delete" data-message-id="${msg.id}" style="color:#d1453b;">撤销</button>` : ''}
+                            ${!isOwn && isChatAdmin() ? `<button class="admin-btn admin-btn-revoke" data-action="revoke" data-message-id="${msg.id}" data-user-name="${escapeAttr(msg.userName)}">撤销</button>` : ''}
+                            ${!isOwn && isChatAdmin() ? `<button class="admin-btn admin-btn-mute" data-action="mute-confirm" data-user-id="${msg.userId}" data-user-name="${escapeAttr(msg.userName)}">禁言</button>` : ''}
+                            ${!isOwn && isChatAdmin() ? `<button class="admin-btn admin-btn-unmute" data-action="unmute-confirm" data-user-id="${msg.userId}" data-user-name="${escapeAttr(msg.userName)}">解禁</button>` : ''}
                         </div>
                     </div>
                 </div>
@@ -1545,9 +1600,23 @@
 
             if (lastAtPos !== -1 && !textBeforeCursor.substring(lastAtPos).includes(' ')) {
                 const query = textBeforeCursor.substring(lastAtPos + 1).toLowerCase();
-                const matched = onlineUsers.filter(u =>
-                    u.name.toLowerCase().includes(query) && u.id !== currentUser.id
+
+                // 合并在线用户 + 历史消息用户（去重，在线用户优先排在前面）
+                const userMap = new Map();
+                onlineUsers.forEach(u => {
+                    if (u.id !== currentUser?.id) userMap.set(u.id, { id: u.id, name: u.name, online: true });
+                });
+                (messages[currentChannelId] || []).forEach(msg => {
+                    if (msg.userId && msg.userId !== currentUser?.id && !userMap.has(msg.userId)) {
+                        userMap.set(msg.userId, { id: msg.userId, name: msg.userName, online: false });
+                    }
+                });
+
+                const matched = [...userMap.values()].filter(u =>
+                    u.name && u.name.toLowerCase().includes(query)
                 );
+                // 在线用户排前面
+                matched.sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
 
                 if (matched.length > 0) {
                     userSuggestions.innerHTML = '';
@@ -1558,7 +1627,7 @@
                         const avatar = avatarForName(user.name);
                         div.innerHTML = `
                             <div class="user-avatar" style="background-color: ${color}; margin-right: 10px;">${avatar}</div>
-                            <div>${escapeHtml(user.name)}</div>
+                            <div>${escapeHtml(user.name)}${user.online ? '' : ' <span style="opacity:0.5;font-size:0.8em">(离线)</span>'}</div>
                         `;
                         div.addEventListener('click', () => {
                             const before = chatInput.value.substring(0, lastAtPos + 1);
@@ -1899,7 +1968,134 @@
                         wsSend({ type: 'delete_message', message_id: mid });
                     }
                 }
+
+                if (target.dataset && target.dataset.action === 'revoke') {
+                    const mid = parseInt(target.dataset.messageId);
+                    const uname = target.dataset.userName || '该用户';
+                    if (confirm(`确定撤销 ${uname} 的这条消息吗？`)) {
+                        wsSend({ type: 'delete_message', message_id: mid });
+                    }
+                }
+
+                if (target.dataset && target.dataset.action === 'mute-confirm') {
+                    const uid = parseInt(target.dataset.userId);
+                    const uname = target.dataset.userName || String(uid);
+                    const input = prompt(`禁言 ${uname} 多少小时？(1-720)`, '24');
+                    if (input === null) return;
+                    const hours = parseInt(input);
+                    if (isNaN(hours) || hours < 1 || hours > 720) {
+                        alert('请输入 1~720 之间的整数');
+                        return;
+                    }
+                    muteUser(uid, 0, hours, uname);
+                }
+
+                if (target.dataset && target.dataset.action === 'unmute-confirm') {
+                    const uid = parseInt(target.dataset.userId);
+                    const uname = target.dataset.userName || String(uid);
+                    if (confirm(`确定解除 ${uname} 的禁言吗？`)) {
+                        unmuteUser(uid, 0, uname);
+                    }
+                }
             });
+
+            // ========== 禁言菜单 ==========
+            function showMuteMenu(user, anchor, event) {
+                event && event.stopPropagation();
+                const existing = document.getElementById('mute-menu');
+                if (existing) existing.remove();
+
+                const menu = document.createElement('div');
+                menu.id = 'mute-menu';
+                Object.assign(menu.style, {
+                    position: 'fixed', zIndex: '9999',
+                    background: 'var(--sidebar-bg, #2f3136)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '8px', padding: '4px 0',
+                    minWidth: '160px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                    fontSize: '14px'
+                });
+
+                const muteOptions = [
+                    { label: '禁言 1 小时',  hours: 1 },
+                    { label: '禁言 8 小时',  hours: 8 },
+                    { label: '禁言 24 小时', hours: 24 },
+                    { label: '禁言 72 小时', hours: 72 },
+                ];
+
+                muteOptions.forEach(opt => {
+                    const item = document.createElement('div');
+                    item.textContent = opt.label;
+                    Object.assign(item.style, { padding: '8px 16px', cursor: 'pointer', color: '#fff' });
+                    item.addEventListener('mouseenter', () => item.style.background = 'rgba(255,255,255,0.08)');
+                    item.addEventListener('mouseleave', () => item.style.background = '');
+                    item.addEventListener('click', () => { menu.remove(); muteUser(user.id, 0, opt.hours, user.name); });
+                    menu.appendChild(item);
+                });
+
+                const sep = document.createElement('div');
+                Object.assign(sep.style, { borderTop: '1px solid rgba(255,255,255,0.1)', margin: '4px 0' });
+                menu.appendChild(sep);
+
+                const unmuteItem = document.createElement('div');
+                unmuteItem.textContent = '解除禁言';
+                Object.assign(unmuteItem.style, { padding: '8px 16px', cursor: 'pointer', color: '#4caf50' });
+                unmuteItem.addEventListener('mouseenter', () => unmuteItem.style.background = 'rgba(255,255,255,0.08)');
+                unmuteItem.addEventListener('mouseleave', () => unmuteItem.style.background = '');
+                unmuteItem.addEventListener('click', () => { menu.remove(); unmuteUser(user.id, 0, user.name); });
+                menu.appendChild(unmuteItem);
+
+                // 定位在用户项右侧
+                const rect = anchor.getBoundingClientRect();
+                menu.style.top  = Math.min(rect.top, window.innerHeight - 220) + 'px';
+                menu.style.left = (rect.right + 8) + 'px';
+                document.body.appendChild(menu);
+
+                // 点击其他地方关闭
+                setTimeout(() => {
+                    document.addEventListener('click', function handler() {
+                        menu.remove();
+                        document.removeEventListener('click', handler);
+                    }, { once: true });
+                }, 0);
+            }
+
+            async function muteUser(userId, channelId, hours, userName) {
+                try {
+                    const res = await fetch('/api/v1/chat/mute_user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
+                        body: JSON.stringify({ user_id: userId, channel_id: channelId, hours: hours })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        alert(`已对 ${userName || userId} 禁言 ${hours} 小时`);
+                    } else {
+                        alert('禁言失败：' + (data.message || '未知错误'));
+                    }
+                } catch (e) {
+                    alert('请求失败');
+                }
+            }
+
+            async function unmuteUser(userId, channelId, userName) {
+                try {
+                    const res = await fetch('/api/v1/chat/unmute_user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
+                        body: JSON.stringify({ user_id: userId, channel_id: channelId })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        alert(`已解除 ${userName || userId} 的禁言`);
+                    } else {
+                        alert('解除失败：' + (data.message || '未知错误'));
+                    }
+                } catch (e) {
+                    alert('请求失败');
+                }
+            }
         }
 
         // ========== 启动 ==========

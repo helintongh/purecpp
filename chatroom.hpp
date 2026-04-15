@@ -98,6 +98,20 @@ struct chat_channel_member_t {
 };
 REGISTER_AUTO_KEY(chat_channel_member_t, id);
 
+struct chat_mute_t {
+  uint64_t id;
+  uint64_t user_id;    // 被禁言用户
+  uint64_t channel_id; // 0 = 全局禁言
+  uint64_t muted_by;   // 管理员 user_id
+  uint64_t muted_at;   // ms 时间戳
+  uint64_t muted_until; // ms 时间戳（到期自动解禁）
+
+  static constexpr std::string_view get_alias_struct_name(chat_mute_t *) {
+    return "chat_mutes";
+  }
+};
+REGISTER_AUTO_KEY(chat_mute_t, id);
+
 struct chat_mark_read_req {
   uint64_t channel_id;
   uint64_t last_message_id;
@@ -116,6 +130,17 @@ struct chat_delete_channel_req {
 struct chat_upload_req {
   std::string filename;
   std::string file_data; // base64 encoded
+};
+
+struct chat_mute_req {
+  uint64_t user_id;
+  uint64_t channel_id; // 0 = 全局禁言
+  uint32_t hours;
+};
+
+struct chat_unmute_req {
+  uint64_t user_id;
+  uint64_t channel_id; // 0 = 全局
 };
 
 struct chat_ws_in {
@@ -934,6 +959,17 @@ inline bool init_chat_db() {
           "joined_at INTEGER)");
     }
 
+    if (!table_exists("chat_mutes")) {
+      exec_or_throw(
+          "CREATE TABLE IF NOT EXISTS chat_mutes("
+          "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "user_id INTEGER NOT NULL,"
+          "channel_id INTEGER DEFAULT 0,"
+          "muted_by INTEGER NOT NULL,"
+          "muted_at INTEGER NOT NULL,"
+          "muted_until INTEGER NOT NULL)");
+    }
+
     if (!column_exists("chat_channels", "creator_id")) {
       exec_or_throw(
           "ALTER TABLE chat_channels ADD COLUMN creator_id INTEGER DEFAULT 0");
@@ -1013,6 +1049,9 @@ inline bool init_chat_db() {
     if (!conn->create_datatable<chat_channel_member_t>(ormpp_auto_key{"id"})) {
       throw std::runtime_error(conn->get_last_error());
     }
+    if (!conn->create_datatable<chat_mute_t>(ormpp_auto_key{"id"})) {
+      throw std::runtime_error(conn->get_last_error());
+    }
 
     if (!column_exists("chat_channels", "creator_id")) {
       exec_or_throw(
@@ -1055,6 +1094,9 @@ inline bool init_chat_db() {
     ensure_index("chat_channel_members", "idx_chat_channel_members_channel_user",
                  "CREATE INDEX idx_chat_channel_members_channel_user "
                  "ON chat_channel_members(channel_id, user_id)");
+    ensure_index("chat_mutes", "idx_chat_mutes_user",
+                 "CREATE INDEX idx_chat_mutes_user "
+                 "ON chat_mutes(user_id, channel_id, muted_until)");
 
 #if defined(PURECPP_DB_MYSQL)
     if (!index_exists("chat_messages", "ft_chat_messages_content")) {
@@ -2011,6 +2053,111 @@ public:
     resp.set_status_and_content(status_type::ok, make_success("删除频道成功"));
   }
 
+  // POST /api/v1/chat/mute_user
+  void mute_user(coro_http_request &req, coro_http_response &resp) {
+    auto operator_id = get_user_id_from_token(req);
+    if (operator_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized, make_error("未授权"));
+      return;
+    }
+    if (!is_chat_admin(operator_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("仅管理员可执行禁言操作", 403));
+      return;
+    }
+
+    auto body = req.get_body();
+    chat_mute_req info{};
+    std::error_code ec;
+    iguana::from_json(info, body, ec);
+    if (ec || info.user_id == 0) {
+      resp.set_status_and_content(status_type::bad_request, make_error("参数错误"));
+      return;
+    }
+    if (info.hours == 0 || info.hours > 720) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("禁言时长须在 1~720 小时之间"));
+      return;
+    }
+    if (is_chat_admin(info.user_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("不能禁言管理员", 403));
+      return;
+    }
+
+    auto conn = get_db_pool().get();
+    if (!conn) { set_server_internel_error(resp); return; }
+
+    // 先删除旧记录（同用户同频道），再插入新记录（UPSERT 语义）
+    conn->execute("DELETE FROM chat_mutes WHERE user_id=" +
+                  std::to_string(info.user_id) +
+                  " AND channel_id=" + std::to_string(info.channel_id));
+
+    auto now = get_timestamp_milliseconds();
+    chat_mute_t mute{};
+    mute.user_id = info.user_id;
+    mute.channel_id = info.channel_id;
+    mute.muted_by = operator_id;
+    mute.muted_at = now;
+    mute.muted_until = now + static_cast<uint64_t>(info.hours) * 3600000ULL;
+    conn->insert(mute);
+
+    // 广播禁言通知
+    std::ostringstream ws_os;
+    ws_os << R"({"type":"user_muted","user_id":)" << info.user_id
+          << R"(,"channel_id":)" << info.channel_id
+          << R"(,"muted_until":)" << mute.muted_until << "}";
+    async_simple::coro::syncAwait(
+        chat_hub::instance().broadcast(ws_os.str(), chat_hub::priority::low));
+
+    CINATRA_LOG_INFO << "User " << info.user_id << " muted by " << operator_id
+                     << " for " << info.hours << "h (channel=" << info.channel_id << ")";
+    resp.set_content_type<resp_content_type::json>();
+    resp.set_status_and_content(status_type::ok, make_success("禁言成功"));
+  }
+
+  // POST /api/v1/chat/unmute_user
+  void unmute_user(coro_http_request &req, coro_http_response &resp) {
+    auto operator_id = get_user_id_from_token(req);
+    if (operator_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized, make_error("未授权"));
+      return;
+    }
+    if (!is_chat_admin(operator_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("仅管理员可执行解禁操作", 403));
+      return;
+    }
+
+    auto body = req.get_body();
+    chat_unmute_req info{};
+    std::error_code ec;
+    iguana::from_json(info, body, ec);
+    if (ec || info.user_id == 0) {
+      resp.set_status_and_content(status_type::bad_request, make_error("参数错误"));
+      return;
+    }
+
+    auto conn = get_db_pool().get();
+    if (!conn) { set_server_internel_error(resp); return; }
+
+    conn->execute("DELETE FROM chat_mutes WHERE user_id=" +
+                  std::to_string(info.user_id) +
+                  " AND channel_id=" + std::to_string(info.channel_id));
+
+    // 广播解禁通知
+    std::ostringstream ws_os;
+    ws_os << R"({"type":"user_unmuted","user_id":)" << info.user_id
+          << R"(,"channel_id":)" << info.channel_id << "}";
+    async_simple::coro::syncAwait(
+        chat_hub::instance().broadcast(ws_os.str(), chat_hub::priority::low));
+
+    CINATRA_LOG_INFO << "User " << info.user_id << " unmuted by " << operator_id
+                     << " (channel=" << info.channel_id << ")";
+    resp.set_content_type<resp_content_type::json>();
+    resp.set_status_and_content(status_type::ok, make_success("解禁成功"));
+  }
+
   // GET /ws/chat?token=<jwt>
   async_simple::coro::Lazy<void> handle_ws(coro_http_request &req,
                                            coro_http_response &resp) {
@@ -2097,7 +2244,7 @@ public:
               R"({"type":"error","msg":"发送过于频繁，请稍后再试"})");
           continue;
         }
-        co_await handle_chat_message(user_id, user_name, cm.channel_id, cm.text);
+        co_await handle_chat_message(user_id, user_name, cm.channel_id, cm.text, session_state);
       } else if (cm.type == "subscribe_channel") {
         if (user_can_access_channel(user_id, cm.channel_id)) {
           chat_hub::instance().subscribe_channel(conn_key, cm.channel_id);
@@ -2160,6 +2307,17 @@ private:
     return role == "admin" || role == "superadmin";
   }
 
+  bool is_user_muted(uint64_t user_id, uint64_t channel_id) {
+    auto conn = get_db_pool().get();
+    if (!conn) return false;
+    auto now = get_timestamp_milliseconds();
+    auto mutes = conn->query<chat_mute_t>(
+        "user_id=" + std::to_string(user_id) +
+        " AND (channel_id=0 OR channel_id=" + std::to_string(channel_id) + ")" +
+        " AND muted_until>" + std::to_string(now));
+    return !mutes.empty();
+  }
+
   bool user_can_access_channel(uint64_t user_id, uint64_t channel_id) {
     if (channel_id == 0) return false;
 
@@ -2185,7 +2343,8 @@ private:
 
   async_simple::coro::Lazy<void>
   handle_chat_message(uint64_t user_id, const std::string &user_name,
-                      uint64_t channel_id, const std::string &text) {
+                      uint64_t channel_id, const std::string &text,
+                      std::shared_ptr<chat_hub::session> session_state) {
     const auto total_begin = chat_perf_stats::now_ns();
     uint64_t db_ns = 0;
     uint64_t json_build_ns = 0;
@@ -2198,6 +2357,25 @@ private:
 
     // Permission check: verify user has access to the channel
     if (!user_can_access_channel(user_id, channel_id)) co_return;
+
+    // Mute check
+    {
+      auto mute_conn = get_db_pool().get();
+      if (mute_conn) {
+        auto now = get_timestamp_milliseconds();
+        auto mutes = mute_conn->query<chat_mute_t>(
+            "user_id=" + std::to_string(user_id) +
+            " AND (channel_id=0 OR channel_id=" + std::to_string(channel_id) + ")" +
+            " AND muted_until>" + std::to_string(now));
+        if (!mutes.empty()) {
+          std::ostringstream err_os;
+          err_os << R"({"type":"error","msg":"您已被禁言，禁言将于 )"
+                 << chat_format_time(mutes[0].muted_until) << R"( 解除"})";
+          co_await chat_hub::instance().send_to(session_state, err_os.str());
+          co_return;
+        }
+      }
+    }
 
     chat_channel_cache_entry channel{};
     if (!chat_channel_cache::instance().get(channel_id, channel)) co_return;
@@ -2347,9 +2525,10 @@ private:
     auto conn = get_db_pool().get();
     if (!conn) co_return;
 
-    // Verify ownership
+    // Verify ownership or admin privilege
     auto msgs = conn->query_s<chat_message_t>("id = ?", message_id);
-    if (msgs.empty() || msgs[0].user_id != user_id) co_return;
+    if (msgs.empty()) co_return;
+    if (msgs[0].user_id != user_id && !is_chat_admin(user_id)) co_return;
 
     auto channel_id = msgs[0].channel_id;
 

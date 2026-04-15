@@ -499,6 +499,12 @@ int main() {
   server.set_http_handler<POST>(
       "/api/v1/chat/upload", &chat_handler_t::upload_file, chat_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/mute_user", &chat_handler_t::mute_user, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/unmute_user", &chat_handler_t::unmute_user, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<GET>(
       "/ws/chat", &chat_handler_t::handle_ws, chat_h);
 

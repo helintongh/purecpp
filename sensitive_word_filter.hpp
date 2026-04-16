@@ -67,10 +67,11 @@ class sensitive_word_filter {
  private:
   // ── Aho-Corasick 节点 ──────────────────────────────────────────────────────
   struct ac_node {
-    std::unordered_map<uint8_t, int> ch;  // 字节 → 子节点下标
-    int fail     = 0;  // failure link：最长真后缀对应的节点
-    int dict_suf = 0;  // 沿 fail 链最近的词尾节点（加速输出枚举）
-    int word_len = 0;  // > 0 表示此处是某个词的结尾，值为词的字节长度
+    std::unordered_map<uint8_t, int> ch;
+    int fail     = 0;
+    int dict_suf = 0;
+    int word_len = 0;   // > 0 表示此处是某个词的结尾，值为词的字节长度
+    bool ascii_word = false; // 该词是否为纯 ASCII（需要词边界检查）
   };
 
   struct automaton {
@@ -96,8 +97,12 @@ class sensitive_word_filter {
           cur = it->second;
         }
       }
-      if (a.nodes[cur].word_len == 0)
+      if (a.nodes[cur].word_len == 0) {
         a.nodes[cur].word_len = static_cast<int>(w.size());
+        // 纯 ASCII 词（所有字节 < 128）需要词边界检查，避免误杀正常单词
+        a.nodes[cur].ascii_word = std::all_of(
+            w.begin(), w.end(), [](unsigned char c) { return c < 128; });
+      }
     }
 
     // 2. BFS 建 failure link 和 dict_suffix link
@@ -149,15 +154,19 @@ class sensitive_word_filter {
       cur = go(ac_, cur, static_cast<uint8_t>(lower[i]));
 
       // 枚举所有在位置 i 结尾的词：先检查当前节点，再沿 dict_suffix 链枚举更短的词
-      if (ac_.nodes[cur].word_len > 0) {
-        size_t wl = static_cast<size_t>(ac_.nodes[cur].word_len);
-        for (size_t k = i + 1 - wl; k <= i; ++k) mask[k] = true;
-      }
-      for (int ds = ac_.nodes[cur].dict_suf; ds != 0;
-           ds = ac_.nodes[ds].dict_suf) {
-        size_t wl = static_cast<size_t>(ac_.nodes[ds].word_len);
-        for (size_t k = i + 1 - wl; k <= i; ++k) mask[k] = true;
-      }
+      auto try_mask = [&](int nd) {
+        if (ac_.nodes[nd].word_len <= 0) return;
+        size_t wl = static_cast<size_t>(ac_.nodes[nd].word_len);
+        size_t start = i + 1 - wl;
+        // 纯 ASCII 词需要词边界，避免误杀正常单词中的子串（如 "sm" 误杀 "qicosmos"）
+        if (ac_.nodes[nd].ascii_word && !has_word_boundary(lower, start, i + 1))
+          return;
+        for (size_t k = start; k <= i; ++k) mask[k] = true;
+      };
+
+      try_mask(cur);
+      for (int ds = ac_.nodes[cur].dict_suf; ds != 0; ds = ac_.nodes[ds].dict_suf)
+        try_mask(ds);
     }
 
     // 构建结果：未被 mask 的字节原样保留；被 mask 的连续区域按 Unicode 字符数替换为 '*'
@@ -180,16 +189,38 @@ class sensitive_word_filter {
   bool do_contains(const std::string &text) const {
     const std::string lower = to_lower(text);
     int cur = 0;
-    for (uint8_t c : lower) {
-      cur = go(ac_, cur, c);
-      if (ac_.nodes[cur].word_len > 0 || ac_.nodes[cur].dict_suf != 0)
+    for (size_t i = 0; i < lower.size(); ++i) {
+      cur = go(ac_, cur, static_cast<uint8_t>(lower[i]));
+      auto check = [&](int nd) -> bool {
+        if (ac_.nodes[nd].word_len <= 0) return false;
+        size_t wl = static_cast<size_t>(ac_.nodes[nd].word_len);
+        size_t start = i + 1 - wl;
+        if (ac_.nodes[nd].ascii_word && !has_word_boundary(lower, start, i + 1))
+          return false;
         return true;
+      };
+      if (check(cur)) return true;
+      for (int ds = ac_.nodes[cur].dict_suf; ds != 0; ds = ac_.nodes[ds].dict_suf)
+        if (check(ds)) return true;
     }
     return false;
   }
 
   // ── 工具函数 ───────────────────────────────────────────────────────────────
-  static std::string to_lower(const std::string &s) {
+
+  // 判断字节是否为 ASCII 单词字符（字母、数字、下划线）
+  static bool is_word_char(unsigned char c) {
+    return (c < 128) && (std::isalnum(c) || c == '_');
+  }
+
+  // 纯 ASCII 词的词边界检查：匹配区间 [start, end) 前后不能是单词字符
+  static bool has_word_boundary(const std::string &text, size_t start, size_t end) {
+    if (start > 0 && is_word_char(static_cast<unsigned char>(text[start - 1])))
+      return false;
+    if (end < text.size() && is_word_char(static_cast<unsigned char>(text[end])))
+      return false;
+    return true;
+  }  static std::string to_lower(const std::string &s) {
     std::string r = s;
     for (auto &c : r)
       c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));

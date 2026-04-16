@@ -1899,19 +1899,6 @@ public:
     }
 
     std::vector<chat_message_t> msgs;
-#if defined(PURECPP_DB_MYSQL)
-    if (ch_str.empty()) {
-      msgs = conn->query_s<chat_message_t>(
-          "MATCH(content) AGAINST(? IN BOOLEAN MODE) "
-          "ORDER BY created_at DESC LIMIT 100",
-          q);
-    } else {
-      msgs = conn->query_s<chat_message_t>(
-          "channel_id = ? AND MATCH(content) AGAINST(? IN BOOLEAN MODE) "
-          "ORDER BY created_at DESC LIMIT 100",
-          channel_id, q);
-    }
-#else
     std::string like_pattern = "%" + escape_sql_like(q) + "%";
     if (ch_str.empty()) {
       msgs = conn->query_s<chat_message_t>(
@@ -1922,7 +1909,6 @@ public:
           "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
           channel_id, like_pattern);
     }
-#endif
 
     // Batch load reactions (avoid N+1)
     auto reactions_map = batch_build_reactions(msgs);

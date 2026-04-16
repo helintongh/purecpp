@@ -751,7 +751,7 @@
             <div class="chat-input-container">
                 <div id="typing-indicator" style="display:none; padding:2px 16px; font-size:12px; color:#888; font-style:italic;"></div>
                 <div class="chat-input-wrapper">
-                    <textarea class="chat-input" id="chat-input" placeholder="输入消息... 使用@提及用户" maxlength="2000"></textarea>
+                    <textarea class="chat-input" id="chat-input" placeholder="输入消息... 使用@提及用户"></textarea>
                     <div class="user-suggestions" id="user-suggestions"></div>
                     <div class="emoji-picker" id="emoji-picker"></div>
                 </div>
@@ -798,7 +798,7 @@
         let channels = [];              // [{id, name, topic, unread}]
         let messages = {};              // channelId -> [msg]
         let onlineUsers = [];           // [{id, name}]
-        let messageLoadCount = 50;
+        let channelHasMore = {};        // channelId -> bool，是否还有更早消息
         let ws = null;
         let reconnectTimer = null;
         let markReadTimer = null;
@@ -867,6 +867,7 @@
             currentChannelId = null;
 
             if (ws) {
+                intentionalClose = true;
                 try { ws.close(); } catch (e) {}
                 ws = null;
             }
@@ -955,16 +956,22 @@
             }
         }
 
-        async function loadHistory(channelId) {
-            const res = await fetch(`/api/v1/chat/history?channel_id=${channelId}&limit=50`, {
-                headers: { 'Authorization': 'Bearer ' + accessToken }
-            });
+        async function loadHistory(channelId, beforeId = null) {
+            let url = `/api/v1/chat/history?channel_id=${channelId}&limit=50`;
+            if (beforeId) url += `&before_id=${beforeId}`;
+            const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + accessToken } });
             if (!res.ok) {
                 messages[channelId] = [];
                 return;
             }
             const data = await res.json();
-            messages[channelId] = (data.data || []).map(normalizeMsg);
+            const fetched = (data.data || []).map(normalizeMsg);
+            if (beforeId) {
+                messages[channelId] = [...fetched, ...(messages[channelId] || [])];
+            } else {
+                messages[channelId] = fetched;
+            }
+            channelHasMore[channelId] = data.has_more || false;
         }
 
         function channelById(channelId) {
@@ -1065,6 +1072,7 @@
 
         let reconnectAttempts = 0;
         const maxReconnectDelay = 30000;
+        let intentionalClose = false;  // 主动登出时置 true，阻止自动重连
 
         // ========== WebSocket ==========
         function connectWebSocket() {
@@ -1100,6 +1108,10 @@
             };
 
             ws.onclose = () => {
+                if (intentionalClose) {
+                    intentionalClose = false;
+                    return;
+                }
                 const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
                 reconnectAttempts++;
                 console.log(`[chat] ws closed, reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
@@ -1143,7 +1155,6 @@
                     if (!messages[m.channel_id]) messages[m.channel_id] = [];
                     messages[m.channel_id].push(m);
                     if (m.channel_id === currentChannelId) {
-                        messageLoadCount++;
                         appendSingleMessage(m);
                         scheduleMarkChannelRead(currentChannelId);
                     } else {
@@ -1309,8 +1320,10 @@
 
         // ========== 渲染：在线成员（左栏） ==========
         function renderOnlineUsers() {
+            const MAX_DISPLAY = 100;
             userList.innerHTML = '';
-            onlineUsers.forEach(user => {
+            const toShow = onlineUsers.slice(0, MAX_DISPLAY);
+            toShow.forEach(user => {
                 const li = document.createElement('li');
                 li.className = 'user-item';
                 li.dataset.userId = user.id;
@@ -1330,6 +1343,12 @@
                 });
                 userList.appendChild(li);
             });
+            if (onlineUsers.length > MAX_DISPLAY) {
+                const li = document.createElement('li');
+                li.className = 'user-item';
+                li.innerHTML = `<div class="user-item-text" style="color:var(--chat-muted-color);font-size:12px;">还有 ${onlineUsers.length - MAX_DISPLAY} 人在线...</div>`;
+                userList.appendChild(li);
+            }
         }
 
         function renderChannelUsers() {
@@ -1340,21 +1359,25 @@
         function renderMessages() {
             chatMessages.innerHTML = '';
             const channelMessages = messages[currentChannelId] || [];
-            const startIndex = Math.max(0, channelMessages.length - messageLoadCount);
-            const messagesToShow = channelMessages.slice(startIndex);
 
-            if (startIndex > 0) {
+            if (channelHasMore[currentChannelId]) {
                 const loadMoreDiv = document.createElement('div');
                 loadMoreDiv.className = 'load-more';
-                loadMoreDiv.textContent = `阅读更多消息 (${startIndex} 条)`;
-                loadMoreDiv.addEventListener('click', () => {
-                    messageLoadCount += 20;
+                loadMoreDiv.textContent = '加载更早消息';
+                loadMoreDiv.addEventListener('click', async () => {
+                    const oldestId = channelMessages.length > 0 ? channelMessages[0].id : null;
+                    if (!oldestId) return;
+                    loadMoreDiv.textContent = '加载中...';
+                    loadMoreDiv.style.pointerEvents = 'none';
+                    const scrollBottom = chatMessages.scrollHeight - chatMessages.scrollTop;
+                    await loadHistory(currentChannelId, oldestId);
                     renderMessages();
+                    chatMessages.scrollTop = chatMessages.scrollHeight - scrollBottom;
                 });
                 chatMessages.appendChild(loadMoreDiv);
             }
 
-            messagesToShow.forEach(msg => {
+            channelMessages.forEach(msg => {
                 chatMessages.appendChild(buildMessageElement(msg));
             });
 
@@ -1438,7 +1461,7 @@
 
         function updateMessageLengthHint() {
             if (!chatInput || !messageLengthCounter) return;
-            const length = chatInput.value.length;
+            const length = codePointLength(chatInput.value);
             messageLengthCounter.textContent = `${length} / ${MAX_MESSAGE_LENGTH}`;
             const overLimit = length > MAX_MESSAGE_LENGTH;
             messageLengthCounter.classList.toggle('over-limit', overLimit);
@@ -1522,7 +1545,7 @@
         async function switchChannel(channelId) {
             if (!channelId) return;
             currentChannelId = channelId;
-            messageLoadCount = 50;
+            channelHasMore[channelId] = false;
 
             // 退出搜索模式
             if (isSearchMode) clearSearch();
@@ -1545,12 +1568,18 @@
         // ========== 发送消息 ==========
         const MAX_MESSAGE_LENGTH = 2000;
 
+        // 按 Unicode 码点计数（与后端 utf8_codepoint_count 一致）
+        // [...str] 会将 surrogate pair（如 emoji）展开为单个码点
+        function codePointLength(str) {
+            return [...str].length;
+        }
+
         function sendMessage() {
             const text = chatInput.value.trim();
             if (!text) return;
             if (!currentChannelId) return;
-            if (text.length > MAX_MESSAGE_LENGTH) {
-                setMessageStatus(`消息不能超过 ${MAX_MESSAGE_LENGTH} 字，当前 ${text.length} 字`, true);
+            if (codePointLength(text) > MAX_MESSAGE_LENGTH) {
+                setMessageStatus(`消息不能超过 ${MAX_MESSAGE_LENGTH} 字，当前 ${codePointLength(text)} 字`, true);
                 updateMessageLengthHint();
                 return;
             }
@@ -1782,7 +1811,6 @@
                     isSearchMode = true;
                 }
                 messages[currentChannelId] = results;
-                messageLoadCount = results.length;
                 lastSearchQuery = q;
                 renderMessages();
                 clearBtn.style.display = 'inline-block';
@@ -1802,7 +1830,6 @@
                 savedMessages = null;
                 isSearchMode = false;
                 lastSearchQuery = '';
-                messageLoadCount = 50;
                 renderMessages();
                 setMessageStatus(`单条消息最多 ${MAX_MESSAGE_LENGTH} 字`);
                 updateMessageLengthHint();

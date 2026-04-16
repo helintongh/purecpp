@@ -18,6 +18,8 @@
 #include "articles_aspects.hpp"
 #include "articles_comment.hpp"
 #include "chatroom.hpp"
+#include "file_watcher.hpp"
+#include "sensitive_word_filter.hpp"
 #include "entity.hpp"
 #include "rate_limiter.hpp"
 #include "tags.hpp"
@@ -208,11 +210,29 @@ int main() {
     return -1;
   }
 
+  // 加载聊天室敏感词库
+  sensitive_word_filter::instance().load("sensitive_words.txt");
+  if (!sensitive_word_filter::instance().empty()) {
+    CINATRA_LOG_INFO << "sensitive word filter loaded";
+  }
+
   // 从配置文件加载配置
   purecpp_config::get_instance().load_config("cfg/user_config.json");
 
   // 初始化限流器
   rate_limiter::instance().init_from_config();
+
+  // 启动文件热更新监视器（每 5 秒检查一次修改时间）
+  file_watcher watcher;
+  watcher.add("cfg/user_config.json", [] {
+    purecpp_config::get_instance().reload_config();
+    CINATRA_LOG_INFO << "cfg/user_config.json reloaded";
+  });
+  watcher.add("sensitive_words.txt", [] {
+    sensitive_word_filter::instance().load("sensitive_words.txt");
+    CINATRA_LOG_INFO << "sensitive_words.txt reloaded";
+  });
+  watcher.start(std::chrono::seconds(5));
 
   coro_http_server server(std::thread::hardware_concurrency(), 443);
   server.init_ssl("purecpp.pem", "purecpp.key");

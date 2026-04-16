@@ -19,6 +19,7 @@
 #include "common.hpp"
 #include "entity.hpp"
 #include "jwt_token.hpp"
+#include "sensitive_word_filter.hpp"
 
 using namespace cinatra;
 using namespace ormpp;
@@ -223,6 +224,16 @@ inline std::string url_decode(const std::string &s) {
     r += s[i];
   }
   return r;
+}
+
+// 统计 UTF-8 字符串的 Unicode 码点数（即用户感知的"字符数"）。
+// UTF-8 续字节 10xxxxxx 不计入，每个起始字节算一个码点。
+// 汉字、emoji、ASCII 字母各算 1 个字符。
+inline size_t utf8_codepoint_count(std::string_view s) {
+  size_t n = 0;
+  for (unsigned char c : s)
+    if ((c & 0xC0u) != 0x80u) ++n;
+  return n;
 }
 
 inline std::string json_escape(std::string_view input) {
@@ -1804,10 +1815,11 @@ public:
     resp.set_status_and_content(status_type::ok, os.str());
   }
 
-  // GET /api/v1/chat/history?channel_id=1&limit=50
+  // GET /api/v1/chat/history?channel_id=1&limit=50&before_id=12345
   void get_history(coro_http_request &req, coro_http_response &resp) {
     auto ch_str = std::string(req.get_query_value("channel_id"));
     auto lim_str = std::string(req.get_query_value("limit"));
+    auto before_str = std::string(req.get_query_value("before_id"));
     if (ch_str.empty()) {
       resp.set_status_and_content(status_type::bad_request,
                                   make_error("缺少 channel_id 参数"));
@@ -1828,16 +1840,26 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
+    std::string where = "channel_id=" + std::to_string(channel_id);
+    if (!before_str.empty()) {
+      uint64_t before_id = 0;
+      try { before_id = std::stoull(before_str); } catch (...) {}
+      if (before_id > 0)
+        where += " AND id<" + std::to_string(before_id);
+    }
+
     auto msgs = conn->query<chat_message_t>(
-        "channel_id=" + std::to_string(channel_id) +
-        " ORDER BY created_at DESC LIMIT " + std::to_string(limit));
+        where + " ORDER BY id DESC LIMIT " + std::to_string(limit));
     std::reverse(msgs.begin(), msgs.end());
+
+    bool has_more = (msgs.size() == static_cast<size_t>(limit));
 
     // Batch load reactions for all messages (avoid N+1)
     auto reactions_map = batch_build_reactions(msgs);
 
     std::ostringstream os;
-    os << R"({"success":true,"message":"获取消息历史成功","code":200,"data":[)";
+    os << R"({"success":true,"message":"获取消息历史成功","code":200,"has_more":)"
+       << (has_more ? "true" : "false") << R"(,"data":[)";
     for (size_t i = 0; i < msgs.size(); i++) {
       if (i) os << ",";
       os << build_msg_json(msgs[i], reactions_map[msgs[i].id]);
@@ -1877,16 +1899,30 @@ public:
     }
 
     std::vector<chat_message_t> msgs;
+#if defined(PURECPP_DB_MYSQL)
+    if (ch_str.empty()) {
+      msgs = conn->query_s<chat_message_t>(
+          "MATCH(content) AGAINST(? IN BOOLEAN MODE) "
+          "ORDER BY created_at DESC LIMIT 100",
+          q);
+    } else {
+      msgs = conn->query_s<chat_message_t>(
+          "channel_id = ? AND MATCH(content) AGAINST(? IN BOOLEAN MODE) "
+          "ORDER BY created_at DESC LIMIT 100",
+          channel_id, q);
+    }
+#else
     std::string like_pattern = "%" + escape_sql_like(q) + "%";
     if (ch_str.empty()) {
-        msgs = conn->query_s<chat_message_t>(
-            "content LIKE ? ORDER BY created_at DESC LIMIT 100",
-            like_pattern);
+      msgs = conn->query_s<chat_message_t>(
+          "content LIKE ? ORDER BY created_at DESC LIMIT 100",
+          like_pattern);
     } else {
-        msgs = conn->query_s<chat_message_t>(
-            "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
-            channel_id, like_pattern);
+      msgs = conn->query_s<chat_message_t>(
+          "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
+          channel_id, like_pattern);
     }
+#endif
 
     // Batch load reactions (avoid N+1)
     auto reactions_map = batch_build_reactions(msgs);
@@ -2219,7 +2255,11 @@ public:
     while (true) {
       auto ws_result = co_await conn_ptr->read_websocket();
       if (ws_result.ec) break;
-      if (ws_result.type == ws_frame_type::WS_CLOSE_FRAME) break;
+      if (ws_result.type == ws_frame_type::WS_CLOSE_FRAME) {
+        // RFC 6455 §5.5.1: must echo a Close frame before closing
+        co_await conn_ptr->write_websocket("", opcode::close);
+        break;
+      }
       if (ws_result.type == ws_frame_type::WS_PING_FRAME ||
           ws_result.type == ws_frame_type::WS_PONG_FRAME) continue;
       if (ws_result.type != ws_frame_type::WS_TEXT_FRAME) continue;
@@ -2232,7 +2272,7 @@ public:
       if (ec) continue;
 
       if (cm.type == "message") {
-        if (cm.text.size() > 2000) {
+        if (utf8_codepoint_count(cm.text) > 2000) {
           co_await chat_hub::instance().send_to(
               session_state,
               R"({"type":"error","msg":"消息不能超过2000字"})");
@@ -2256,7 +2296,7 @@ public:
       } else if (cm.type == "react") {
         co_await handle_reaction(user_id, cm.message_id, cm.emoji);
       } else if (cm.type == "edit_message") {
-        if (cm.text.size() > 2000) {
+        if (utf8_codepoint_count(cm.text) > 2000) {
           co_await chat_hub::instance().send_to(
               session_state,
               R"({"type":"error","msg":"编辑内容不能超过2000字"})");
@@ -2353,7 +2393,7 @@ private:
 
     if (text.empty() || channel_id == 0) co_return;
     // Input validation
-    if (text.size() > 2000) co_return;
+    if (utf8_codepoint_count(text) > 2000) co_return;
 
     // Permission check: verify user has access to the channel
     if (!user_can_access_channel(user_id, channel_id)) co_return;
@@ -2380,11 +2420,14 @@ private:
     chat_channel_cache_entry channel{};
     if (!chat_channel_cache::instance().get(channel_id, channel)) co_return;
 
+    const std::string filtered_text =
+        sensitive_word_filter::instance().filter(text);
+
     chat_message_t m{};
     m.channel_id = channel_id;
     m.user_id = user_id;
     str_to_arr(m.user_name, user_name);
-    m.content = text;
+    m.content = filtered_text;
     m.created_at = get_timestamp_milliseconds();
     m.channel_seq = 0;
 
@@ -2495,7 +2538,7 @@ private:
   handle_edit_message(uint64_t user_id, uint64_t message_id,
                       const std::string &new_text) {
     if (message_id == 0 || new_text.empty()) co_return;
-    if (new_text.size() > 2000) co_return;
+    if (utf8_codepoint_count(new_text) > 2000) co_return;
 
     auto conn = get_db_pool().get();
     if (!conn) co_return;
@@ -2505,14 +2548,17 @@ private:
     if (msgs.empty() || msgs[0].user_id != user_id) co_return;
     auto channel_id = msgs[0].channel_id;
 
+    const std::string filtered_text =
+        sensitive_word_filter::instance().filter(new_text);
+
     // Update content
-    msgs[0].content = new_text;
+    msgs[0].content = filtered_text;
     conn->update(msgs[0]);
 
     std::ostringstream os;
     os << R"({"type":"message_edited","message_id":)" << message_id
        << R"(,"channel_id":)" << channel_id
-       << R"(,"text":")" << json_escape(new_text)
+       << R"(,"text":")" << json_escape(filtered_text)
        << R"(","edited_at":)" << get_timestamp_milliseconds() << "}";
     co_await chat_hub::instance().broadcast_active_channel(channel_id,
                                                            os.str());

@@ -37,46 +37,49 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // 加载页眉
 function loadHeader() {
-    fetch('header.html')
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    fetch('header.html', { signal: controller.signal })
         .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
+            clearTimeout(timer);
+            if (!response.ok) throw new Error('Network response was not ok');
             return response.text();
         })
         .then(html => {
             const headerContainer = document.getElementById('header-container');
             if (headerContainer) {
                 headerContainer.innerHTML = html;
-                // 确保登录状态的用户图标能正确显示
                 if (typeof initUserInfo === 'function') {
                     initUserInfo();
                 }
             }
         })
         .catch(error => {
+            clearTimeout(timer);
             console.error('Error loading header:', error);
         });
 }
 
 // 加载页脚
 function loadFooter() {
-    fetch('footer.html')
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    fetch('footer.html', { signal: controller.signal })
         .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
+            clearTimeout(timer);
+            if (!response.ok) throw new Error('Network response was not ok');
             return response.text();
         })
         .then(html => {
+            clearTimeout(timer);
             const footerContainer = document.getElementById('footer-container');
             if (footerContainer) {
                 footerContainer.innerHTML = html;
-                // 页脚加载完成后重新初始化主题切换功能，确保事件绑定正确
                 initTheme();
             }
         })
         .catch(error => {
+            clearTimeout(timer);
             console.error('Error loading footer:', error);
         });
 }

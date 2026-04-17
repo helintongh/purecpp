@@ -385,11 +385,43 @@
         }
 
         .message-text .mention-other {
-            background-color: #fff9c4; /* 浅黄色背景 */
-            color: #f57c00; /* 橙色文字 */
+            background-color: #fff9c4;
+            color: #f57c00;
             padding: 1px 4px;
             border-radius: 3px;
             font-weight: bold;
+        }
+
+        /* Markdown 渲染样式 */
+        .message-text p { margin: 0 0 4px; }
+        .message-text p:last-child { margin-bottom: 0; }
+        .message-text h1, .message-text h2, .message-text h3 {
+            font-size: 1em; font-weight: bold; margin: 4px 0;
+        }
+        .message-text code {
+            background: rgba(0,0,0,0.12);
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .message-text pre {
+            background: rgba(0,0,0,0.15);
+            border-radius: 4px;
+            padding: 8px;
+            overflow-x: auto;
+            margin: 4px 0;
+        }
+        .message-text pre code { background: none; padding: 0; }
+        .message-text blockquote {
+            border-left: 3px solid var(--accent-color);
+            margin: 4px 0;
+            padding: 2px 8px;
+            opacity: 0.8;
+        }
+        .message-text ul, .message-text ol {
+            margin: 4px 0;
+            padding-left: 20px;
         }
         
         .message-actions {
@@ -495,6 +527,44 @@
         .chat-input:focus {
             outline: none;
             border-color: var(--accent-color);
+        }
+
+        /* SimpleMDE 在聊天室中的样式覆盖 */
+        .chat-input-wrapper .CodeMirror {
+            min-height: 80px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 15px;
+            font-family: inherit;
+            background-color: var(--chat-input-bg);
+            color: var(--chat-text-color);
+            border: none;
+        }
+        .chat-input-wrapper .editor-toolbar {
+            background-color: var(--chat-panel-bg);
+            border-color: var(--chat-panel-border);
+            opacity: 1;
+        }
+        .chat-input-wrapper .editor-toolbar a {
+            color: var(--chat-text-color) !important;
+        }
+        .chat-input-wrapper .editor-toolbar a:hover,
+        .chat-input-wrapper .editor-toolbar a.active {
+            background-color: var(--chat-hover-bg);
+            border-color: var(--chat-panel-border);
+        }
+        .chat-input-wrapper .CodeMirror-scroll {
+            min-height: 80px;
+        }
+        .chat-input-wrapper .editor-preview {
+            background-color: var(--chat-panel-bg);
+            color: var(--chat-text-color);
+        }
+        .chat-input-wrapper .editor-preview pre {
+            background-color: var(--chat-input-bg);
+        }
+        .chat-input-wrapper .CodeMirror-placeholder {
+            color: var(--chat-muted-color);
         }
         
         .input-actions {
@@ -604,10 +674,10 @@
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     padding: 10px;
     display: none;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
     z-index: 1000;
-    max-width: 250px;
+    max-width: 380px;
 }
 
 .reaction-emoji {
@@ -778,6 +848,8 @@
     <div id="footer-container"></div>
     <script src="script/api_service.js"></script>
     <script src="script/layout.js"></script>
+    <script src="script/simplemde.min.js"></script>
+    <script src="script/marked.min.js"></script>
 
     <script>
         // ========== 常用表情 ==========
@@ -805,6 +877,7 @@
         let accessToken = null;
         let chatEventsBound = false;
         let creatingChannel = false;
+        let mde = null;  // SimpleMDE 实例
         let lastSearchQuery = '';
 
         // ========== DOM 元素 ==========
@@ -829,12 +902,20 @@
 
         // ========== 初始化 ==========
         async function initApp() {
-            // 从主系统获取 JWT token（与其他页面一致）
             accessToken = apiService.getAccessToken();
-            const userInfo = apiService.getUserInfo();
+            let userInfo = apiService.getUserInfo();
+
+            // access_token 存在 sessionStorage，刷新页面后会丢失；
+            // 但 refresh_token 在 localStorage，可以静默换新 token
+            if (!accessToken && apiService.getRefreshToken() && userInfo) {
+                try {
+                    accessToken = await apiService.refreshToken();
+                } catch (e) {
+                    console.warn('[chat] silent refresh failed', e);
+                }
+            }
 
             if (!accessToken || !userInfo) {
-                // 未登录，跳转主登录页
                 window.location.href = '/login.html';
                 return;
             }
@@ -912,7 +993,12 @@
             // 5. 建立 WebSocket 连接
             connectWebSocket();
 
-            // 6. 事件监听
+            // 6. 初始化 Markdown 编辑器（只初始化一次）
+            if (!mde) {
+                initMarkdownEditor();
+            }
+
+            // 7. 事件监听
             if (!chatEventsBound) {
                 setupEventListeners();
                 chatEventsBound = true;
@@ -1460,8 +1546,9 @@
         }
 
         function updateMessageLengthHint() {
-            if (!chatInput || !messageLengthCounter) return;
-            const length = codePointLength(chatInput.value);
+            if (!messageLengthCounter) return;
+            const val = mde ? mde.value() : (chatInput ? chatInput.value : '');
+            const length = codePointLength(val);
             messageLengthCounter.textContent = `${length} / ${MAX_MESSAGE_LENGTH}`;
             const overLimit = length > MAX_MESSAGE_LENGTH;
             messageLengthCounter.classList.toggle('over-limit', overLimit);
@@ -1513,32 +1600,38 @@
                 .sort((a, b) => b.length - a.length);
         }
 
-        // 格式化消息文本（@提及、URL）
+        // 格式化消息文本：Markdown 渲染 + @提及高亮
+        const markedRenderer = new marked.Renderer();
+        markedRenderer.link = (href, title, text) => {
+            if (href && !/^(https?:\/\/|\/|#)/i.test(href)) return escapeHtml(text);
+            const t = title ? ` title="${escapeHtml(title)}"` : '';
+            return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener"${t}>${text}</a>`;
+        };
+        markedRenderer.image = (href, title, text) => {
+            if (!href || !/^(https?:\/\/|\/)/i.test(href)) return escapeHtml(text);
+            return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}" style="max-width:400px;max-height:300px;border-radius:6px;cursor:pointer;display:block;margin:4px 0;" onclick="window.open('${escapeHtml(href)}','_blank')">`;
+        };
+        marked.setOptions({ renderer: markedRenderer, breaks: true, gfm: true });
+
         function formatMessageText(text) {
-            let formatted = escapeHtml(text);
-            // 图片 markdown: ![alt](url)
-            formatted = formatted.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
-                // 校验 URL 协议，防止 javascript: 等 XSS
-                const decodedUrl = url.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-                if (!/^(https?:\/\/|\/)/i.test(decodedUrl)) return match;
-                return `<img src="${url}" alt="${alt}" style="max-width:400px; max-height:300px; border-radius:6px; cursor:pointer; display:block; margin:4px 0;" onclick="window.open('${url}','_blank')">`;
-            });
-            // @提及：仅高亮已知用户名，避免把 @ 后面的整段文本误判为 mention。
+            let html = marked.parse(text);
             const mentionableNames = getMentionableNames();
             if (mentionableNames.length > 0) {
                 const mentionPattern = new RegExp(
                     `(^|[^\\u4e00-\\u9fa5\\w])@(${mentionableNames.map(escapeRegex).join('|')})(?=$|[^\\u4e00-\\u9fa5\\w])`,
                     'g'
                 );
-                formatted = formatted.replace(mentionPattern, (match, prefix, name) => {
-                    const isSelf = !!currentUser && name === currentUser.name;
-                    const cls = isSelf ? 'mention-self' : 'mention-other';
-                    return `${prefix}<span class="${cls}">@${name}</span>`;
+                // 只替换标签外的文本节点，避免破坏 href 等属性
+                html = html.replace(/>([^<]*)</g, (m, inner) => {
+                    const replaced = inner.replace(mentionPattern, (match, prefix, name) => {
+                        const isSelf = !!currentUser && name === currentUser.name;
+                        const cls = isSelf ? 'mention-self' : 'mention-other';
+                        return `${prefix}<span class="${cls}">@${name}</span>`;
+                    });
+                    return `>${replaced}<`;
                 });
             }
-            // URL
-            formatted = formatted.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
-            return formatted;
+            return html;
         }
 
         // ========== 切换频道 ==========
@@ -1565,6 +1658,99 @@
             wsSend({ type: 'switch_channel', channel_id: channelId }, { silent: true });
         }
 
+        // ========== Markdown 编辑器 ==========
+        function initMarkdownEditor() {
+            mde = new SimpleMDE({
+                element: document.getElementById('chat-input'),
+                autofocus: true,
+                spellChecker: false,
+                status: false,
+                placeholder: '输入消息... 支持 Markdown，使用@提及用户',
+                toolbar: [
+                    'bold', 'italic', 'strikethrough', '|',
+                    'code', 'quote', '|',
+                    'unordered-list', 'ordered-list', '|',
+                    'link',
+                    {
+                        name: 'image-upload',
+                        action: () => document.getElementById('image-btn').click(),
+                        className: 'fa fa-image',
+                        title: '上传图片'
+                    },
+                    '|', 'preview'
+                ],
+                renderingConfig: {
+                    singleLineBreaks: false,
+                    codeSyntaxHighlighting: true
+                }
+            });
+
+            // 粘贴图片支持
+            mde.codemirror.on('paste', async (cm, e) => {
+                const items = e.clipboardData && e.clipboardData.items;
+                if (!items) return;
+                for (const item of items) {
+                    if (!item.type.startsWith('image/')) continue;
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    if (!file) continue;
+                    await uploadAndInsertImage(file);
+                    break;
+                }
+            });
+
+            // 拖拽图片支持
+            mde.codemirror.on('drop', async (cm, e) => {
+                const files = e.dataTransfer && e.dataTransfer.files;
+                if (!files || !files.length) return;
+                const file = files[0];
+                if (!file.type.startsWith('image/')) return;
+                e.preventDefault();
+                await uploadAndInsertImage(file);
+            });
+
+            // 输入时更新字数统计
+            mde.codemirror.on('change', () => {
+                updateMessageLengthHint();
+                sendTypingEvent();
+                showUserSuggestions();
+            });
+
+            // Ctrl+Enter 发送
+            mde.codemirror.setOption('extraKeys', {
+                'Ctrl-Enter': sendMessage,
+                'Cmd-Enter': sendMessage
+            });
+        }
+
+        async function uploadAndInsertImage(file) {
+            if (file.size > 5 * 1024 * 1024) {
+                alert('文件大小不能超过5MB');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const base64 = reader.result.split(',')[1];
+                try {
+                    const res = await fetch('/api/v1/chat/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': 'Bearer ' + accessToken,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ filename: file.name, file_data: base64 })
+                    });
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.message || '上传失败');
+                    const mdText = `![${file.name}](${data.data.url})`;
+                    mde.codemirror.replaceSelection(mdText);
+                } catch (e) {
+                    alert('上传失败：' + e.message);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
         // ========== 发送消息 ==========
         const MAX_MESSAGE_LENGTH = 2000;
 
@@ -1575,7 +1761,7 @@
         }
 
         function sendMessage() {
-            const text = chatInput.value.trim();
+            const text = mde ? mde.value().trim() : chatInput.value.trim();
             if (!text) return;
             if (!currentChannelId) return;
             if (codePointLength(text) > MAX_MESSAGE_LENGTH) {
@@ -1590,7 +1776,7 @@
                 text: text
             });
             if (ok) {
-                chatInput.value = '';
+                if (mde) mde.value(''); else chatInput.value = '';
                 setMessageStatus(`单条消息最多 ${MAX_MESSAGE_LENGTH} 字`);
                 updateMessageLengthHint();
             }
@@ -1623,8 +1809,17 @@
 
         // ========== @提及建议 ==========
         function showUserSuggestions() {
-            const cursorPos = chatInput.selectionStart;
-            const textBeforeCursor = chatInput.value.substring(0, cursorPos);
+            // mde 接管后从 CodeMirror 光标位置读取文本
+            let textBeforeCursor, cursorPos;
+            if (mde) {
+                const cm = mde.codemirror;
+                const cur = cm.getCursor();
+                textBeforeCursor = cm.getRange({line: 0, ch: 0}, cur);
+                cursorPos = textBeforeCursor.length;
+            } else {
+                cursorPos = chatInput.selectionStart;
+                textBeforeCursor = chatInput.value.substring(0, cursorPos);
+            }
             const lastAtPos = textBeforeCursor.lastIndexOf('@');
 
             if (lastAtPos !== -1 && !textBeforeCursor.substring(lastAtPos).includes(' ')) {
@@ -1659,12 +1854,17 @@
                             <div>${escapeHtml(user.name)}${user.online ? '' : ' <span style="opacity:0.5;font-size:0.8em">(离线)</span>'}</div>
                         `;
                         div.addEventListener('click', () => {
-                            const before = chatInput.value.substring(0, lastAtPos + 1);
-                            const after = chatInput.value.substring(cursorPos);
-                            chatInput.value = before + user.name + ' ' + after;
-                            chatInput.focus();
-                            const newPos = before.length + user.name.length + 1;
-                            chatInput.selectionStart = chatInput.selectionEnd = newPos;
+                            if (mde) {
+                                mde.codemirror.replaceSelection(user.name + ' ');
+                                mde.codemirror.focus();
+                            } else {
+                                const before = chatInput.value.substring(0, lastAtPos + 1);
+                                const after = chatInput.value.substring(cursorPos);
+                                chatInput.value = before + user.name + ' ' + after;
+                                chatInput.focus();
+                                const newPos = before.length + user.name.length + 1;
+                                chatInput.selectionStart = chatInput.selectionEnd = newPos;
+                            }
                             hideUserSuggestions();
                         });
                         userSuggestions.appendChild(div);
@@ -1706,6 +1906,11 @@
         }
 
         function insertAtCursor(text) {
+            if (mde) {
+                mde.codemirror.replaceSelection(text);
+                mde.codemirror.focus();
+                return;
+            }
             const start = chatInput.selectionStart;
             const end = chatInput.selectionEnd;
             chatInput.value = chatInput.value.substring(0, start) + text + chatInput.value.substring(end);
@@ -1753,7 +1958,18 @@
                 picker = document.createElement('div');
                 picker.className = 'reaction-picker';
                 picker.id = `reaction-picker-${messageId}`;
-                const common = ["👍", "❤️", "😂", "😮", "😢", "😡", "👏", "🙏", "🔥", "🎉", "🚀", "💡", "👀", "✅", "❌"];
+                const common = [
+                    // 常用反应
+                    "👍", "👎", "❤️", "🔥", "🎉", "😂", "😮", "😢", "😡", "🙏",
+                    // 表情
+                    "😄", "🤣", "😍", "🥰", "😎", "🤔", "🤯", "🥳", "😭", "😅",
+                    // 手势
+                    "👏", "🤝", "✌️", "🤞", "💪", "🫡", "🫶", "👀", "🙌", "🤙",
+                    // 符号/物件
+                    "✅", "❌", "⚡", "💯", "🚀", "💡", "🐛", "🔧", "📌", "🎯",
+                    // 技术向
+                    "💻", "⌨️", "🖥️", "📦", "🧩", "🔑", "🛠️", "📝", "🧪", "🏆"
+                ];
                 common.forEach(emoji => {
                     const span = document.createElement('span');
                     span.className = 'reaction-emoji';
@@ -1769,17 +1985,37 @@
 
             const rect = buttonElement.getBoundingClientRect();
             picker.style.position = 'fixed';
-            picker.style.top = `${rect.top - 120}px`;
-            picker.style.left = `${rect.left}px`;
-            picker.style.display = picker.style.display === 'grid' ? 'none' : 'grid';
+            picker.style.top = '-9999px';
+            picker.style.left = '-9999px';
+            picker.style.display = 'grid';
 
-            const hide = (e) => {
+            // 先渲染出来拿到真实尺寸，再计算不超出视口的位置
+            const pw = picker.offsetWidth;
+            const ph = picker.offsetHeight;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+
+            let top = rect.top - ph - 6;
+            if (top < 8) top = rect.bottom + 6;          // 上方放不下则放下方
+            if (top + ph > vh - 8) top = vh - ph - 8;    // 仍超出则贴底
+
+            let left = rect.left;
+            if (left + pw > vw - 8) left = vw - pw - 8;  // 右侧超出则左移
+            if (left < 8) left = 8;
+
+            picker.style.top = `${top}px`;
+            picker.style.left = `${left}px`;
+
+            if (picker._toggleHide) {
+                document.removeEventListener('click', picker._toggleHide);
+            }
+            picker._toggleHide = (e) => {
                 if (!picker.contains(e.target) && !buttonElement.contains(e.target)) {
                     picker.style.display = 'none';
-                    document.removeEventListener('click', hide);
+                    document.removeEventListener('click', picker._toggleHide);
                 }
             };
-            setTimeout(() => document.addEventListener('click', hide), 0);
+            setTimeout(() => document.addEventListener('click', picker._toggleHide), 0);
         }
 
         function toggleReaction(messageId, emoji) {
@@ -1840,18 +2076,22 @@
         function setupEventListeners() {
             sendBtn.addEventListener('click', sendMessage);
 
-            chatInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                }
-                if (e.key === '@') setTimeout(showUserSuggestions, 10);
-            });
-            chatInput.addEventListener('input', () => {
-                showUserSuggestions();
-                sendTypingEvent();
-                updateMessageLengthHint();
-            });
+            // mde 接管了 textarea，keydown/input 事件在 initMarkdownEditor 里通过 codemirror 绑定
+            // 这里只保留 @ 触发建议（mde 未初始化时的降级）
+            if (!mde) {
+                chatInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                    }
+                    if (e.key === '@') setTimeout(showUserSuggestions, 10);
+                });
+                chatInput.addEventListener('input', () => {
+                    showUserSuggestions();
+                    sendTypingEvent();
+                    updateMessageLengthHint();
+                });
+            }
 
             document.addEventListener('click', (e) => {
                 if (!userSuggestions.contains(e.target) && e.target !== chatInput) {
@@ -1873,35 +2113,7 @@
                 fileInput.addEventListener('change', async () => {
                     const file = fileInput.files[0];
                     if (!file) return;
-                    if (file.size > 5 * 1024 * 1024) {
-                        alert('文件大小不能超过5MB');
-                        return;
-                    }
-                    const reader = new FileReader();
-                    reader.onload = async () => {
-                        const base64 = reader.result.split(',')[1];
-                        try {
-                            const res = await fetch('/api/v1/chat/upload', {
-                                method: 'POST',
-                                headers: {
-                                    'Authorization': 'Bearer ' + accessToken,
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({ filename: file.name, file_data: base64 })
-                            });
-                            const data = await res.json();
-                            if (!data.success) throw new Error(data.message || '上传失败');
-                            // 发送图片消息
-                            wsSend({
-                                type: 'message',
-                                channel_id: currentChannelId,
-                                text: `![${file.name}](${data.data.url})`
-                            });
-                        } catch (e) {
-                            alert('上传失败：' + e.message);
-                        }
-                    };
-                    reader.readAsDataURL(file);
+                    await uploadAndInsertImage(file);
                 });
                 fileInput.click();
             });
@@ -1973,8 +2185,13 @@
                     const mid = parseInt(target.dataset.messageId);
                     const msg = (messages[currentChannelId] || []).find(m => m.id === mid);
                     if (msg) {
-                        chatInput.value = `@${msg.userName} `;
-                        chatInput.focus();
+                        if (mde) {
+                            mde.value(`@${msg.userName} `);
+                            mde.codemirror.focus();
+                        } else {
+                            chatInput.value = `@${msg.userName} `;
+                            chatInput.focus();
+                        }
                     }
                 }
 

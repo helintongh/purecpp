@@ -533,7 +533,7 @@
         .chat-input-wrapper .CodeMirror {
             min-height: 80px;
             max-height: 200px;
-            overflow-y: auto;
+            overflow: hidden;
             font-size: 15px;
             font-family: inherit;
             background-color: var(--chat-input-bg);
@@ -555,6 +555,8 @@
         }
         .chat-input-wrapper .CodeMirror-scroll {
             min-height: 80px;
+            max-height: 200px;
+            overflow-y: auto !important;
         }
         .chat-input-wrapper .editor-preview {
             background-color: var(--chat-panel-bg);
@@ -842,6 +844,7 @@
                 </div>
             </div>
         </div>
+    </div>
 </main>
 
 <!-- 统一页脚占位符 -->
@@ -1689,13 +1692,22 @@
             mde.codemirror.on('paste', async (cm, e) => {
                 const items = e.clipboardData && e.clipboardData.items;
                 if (!items) return;
+                let hasImage = false;
                 for (const item of items) {
                     if (!item.type.startsWith('image/')) continue;
                     e.preventDefault();
                     const file = item.getAsFile();
                     if (!file) continue;
                     await uploadAndInsertImage(file);
+                    hasImage = true;
                     break;
+                }
+                // 粘贴文本/代码后，将光标滚动到可见区域
+                if (!hasImage) {
+                    setTimeout(() => {
+                        cm.scrollIntoView(cm.getCursor());
+                        cm.focus();
+                    }, 0);
                 }
             });
 

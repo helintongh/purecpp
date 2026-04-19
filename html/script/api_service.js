@@ -10,36 +10,62 @@ class APIService {
         this.accessTokenExpiresKey = 'purecpp_access_token_expires_at';
         this.refreshTokenExpiresKey = 'purecpp_refresh_token_expires_at';
         this.userInfoKey = 'purecpp_user';
+        this.rememberMeKey = 'purecpp_rememberMe';
         this.serverTimeOffset = 0; // 服务器时间偏移量（ms）
         this.maxRefreshAttempts = 3; // 最大刷新尝试次数
         this.refreshAttempts = 0; // 当前刷新尝试次数
         this.lastRefreshTime = 0; // 上次刷新时间
     }
 
+    redirectToLogin() {
+        if (!window.location.pathname.endsWith('/login.html')) {
+            window.location.href = '/login.html';
+        }
+    }
+
+    getPersistentSessionEnabled() {
+        return localStorage.getItem(this.rememberMeKey) === 'true';
+    }
+
+    getStoredValue(key) {
+        return sessionStorage.getItem(key) || localStorage.getItem(key);
+    }
+
     // 获取存储的token
     getAccessToken() {
-        return sessionStorage.getItem(this.tokenKey);
+        return this.getStoredValue(this.tokenKey);
     }
 
     getRefreshToken() {
-        return localStorage.getItem(this.refreshTokenKey);
+        return this.getStoredValue(this.refreshTokenKey);
     }
 
     getAccessTokenExpiresAt() {
-        const expiresAt = sessionStorage.getItem(this.accessTokenExpiresKey);
+        const expiresAt = this.getStoredValue(this.accessTokenExpiresKey);
+        return expiresAt ? parseInt(expiresAt) : 0;
+    }
+
+    getRefreshTokenExpiresAt() {
+        const expiresAt = this.getStoredValue(this.refreshTokenExpiresKey);
         return expiresAt ? parseInt(expiresAt) : 0;
     }
 
     // 存储token
-    // access_token存储到sessionStorage，refresh_token存储到localStorage
+    // 记住我：localStorage 持久会话；未勾选：sessionStorage 临时会话。
     saveTokens(accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt, rememberMe = false) {
-        // access_token存储到sessionStorage
-        sessionStorage.setItem(this.tokenKey, accessToken);
-        sessionStorage.setItem(this.accessTokenExpiresKey, accessTokenExpiresAt.toString());
+        const storage = rememberMe ? localStorage : sessionStorage;
+        const otherStorage = rememberMe ? sessionStorage : localStorage;
 
-        // refresh_token存储到localStorage
-        localStorage.setItem(this.refreshTokenKey, refreshToken);
-        localStorage.setItem(this.refreshTokenExpiresKey, refreshTokenExpiresAt.toString());
+        localStorage.setItem(this.rememberMeKey, rememberMe ? 'true' : 'false');
+        storage.setItem(this.tokenKey, accessToken);
+        storage.setItem(this.accessTokenExpiresKey, accessTokenExpiresAt.toString());
+        storage.setItem(this.refreshTokenKey, refreshToken);
+        storage.setItem(this.refreshTokenExpiresKey, refreshTokenExpiresAt.toString());
+
+        otherStorage.removeItem(this.tokenKey);
+        otherStorage.removeItem(this.accessTokenExpiresKey);
+        otherStorage.removeItem(this.refreshTokenKey);
+        otherStorage.removeItem(this.refreshTokenExpiresKey);
     }
 
     // 清除所有token
@@ -49,22 +75,35 @@ class APIService {
         localStorage.removeItem(this.accessTokenExpiresKey);
         localStorage.removeItem(this.refreshTokenExpiresKey);
         localStorage.removeItem(this.userInfoKey);
+        localStorage.removeItem(this.rememberMeKey);
+        localStorage.removeItem('purecpp_username');
+        localStorage.removeItem('purecpp_password');
 
         sessionStorage.removeItem(this.tokenKey);
+        sessionStorage.removeItem(this.refreshTokenKey);
         sessionStorage.removeItem(this.accessTokenExpiresKey);
+        sessionStorage.removeItem(this.refreshTokenExpiresKey);
         sessionStorage.removeItem(this.userInfoKey);
     }
 
     // 保存用户信息
-    saveUserInfo(userInfo) {
-        const tokenStorage = localStorage.getItem(this.tokenKey) ? localStorage : sessionStorage;
+    saveUserInfo(userInfo, rememberMe = this.getPersistentSessionEnabled()) {
+        const tokenStorage = rememberMe ? localStorage : sessionStorage;
+        const otherStorage = rememberMe ? sessionStorage : localStorage;
         tokenStorage.setItem(this.userInfoKey, JSON.stringify(userInfo));
+        otherStorage.removeItem(this.userInfoKey);
     }
 
     // 获取用户信息
     getUserInfo() {
-        const userInfo = localStorage.getItem(this.userInfoKey) || sessionStorage.getItem(this.userInfoKey);
-        return userInfo ? JSON.parse(userInfo) : null;
+        const userInfo = this.getStoredValue(this.userInfoKey);
+        if (!userInfo) return null;
+        try {
+            return JSON.parse(userInfo);
+        } catch (error) {
+            this.clearTokens();
+            return null;
+        }
     }
 
     // 检查token是否即将过期
@@ -72,7 +111,7 @@ class APIService {
         // Date.now()返回毫秒级时间戳，需要转换为秒级时间戳
         const now = Math.floor(Date.now() / 1000) + this.serverTimeOffset; // 考虑服务器时间偏移，转换为秒级
         const expiresAt = this.getAccessTokenExpiresAt(); // 后台返回的是秒级时间戳
-        if (!expiresAt) return false;
+        if (!expiresAt) return !!this.getRefreshToken();
 
         const tokenLifetime = expiresAt - now;
         if (tokenLifetime <= 0) return true;
@@ -82,12 +121,77 @@ class APIService {
         return now > expiresAt - refreshThreshold;
     }
 
+    isRefreshTokenExpired() {
+        const expiresAt = this.getRefreshTokenExpiresAt();
+        if (!expiresAt) return false;
+        const now = Math.floor(Date.now() / 1000) + this.serverTimeOffset;
+        return now >= expiresAt;
+    }
+
+    async ensureAccessToken() {
+        const accessToken = this.getAccessToken();
+        if (accessToken && !this.isAccessTokenExpiring()) {
+            return accessToken;
+        }
+
+        if (!this.getRefreshToken() || this.isRefreshTokenExpired()) {
+            this.clearTokens();
+            throw new Error('Session expired');
+        }
+
+        if (!this.isRefreshing) {
+            this.isRefreshing = true;
+            try {
+                return await this.refreshToken();
+            } catch (error) {
+                this.refreshTokenQueue.forEach(item => item.reject(error));
+                this.refreshTokenQueue = [];
+                throw error;
+            } finally {
+                this.isRefreshing = false;
+            }
+        }
+
+        return new Promise((resolve, reject) => {
+            this.refreshTokenQueue.push({ resolve, reject });
+        });
+    }
+
+    async restoreSessionIfNeeded() {
+        const userInfo = this.getUserInfo();
+        if (!userInfo) {
+            return false;
+        }
+
+        const accessToken = this.getAccessToken();
+        if (accessToken && !this.isAccessTokenExpiring()) {
+            return true;
+        }
+
+        if (!this.getRefreshToken() || this.isRefreshTokenExpired()) {
+            this.clearTokens();
+            return false;
+        }
+
+        try {
+            await this.ensureAccessToken();
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
     // 刷新token
     async refreshToken() {
         const refreshToken = this.getRefreshToken();
 
         if (!refreshToken) {
             throw new Error('No refresh token available');
+        }
+
+        if (this.isRefreshTokenExpired()) {
+            this.clearTokens();
+            throw new Error('Refresh token expired');
         }
 
         // 检查是否过于频繁刷新
@@ -100,7 +204,6 @@ class APIService {
         // 检查最大尝试次数
         if (this.refreshAttempts >= this.maxRefreshAttempts) {
             this.clearTokens();
-            window.location.href = '/login.html';
             throw new Error('Max refresh attempts reached');
         }
 
@@ -111,6 +214,10 @@ class APIService {
             // 获取用户信息
             const userInfo = this.getUserInfo();
             const userId = userInfo ? userInfo.id : null;
+            if (!userId) {
+                this.clearTokens();
+                throw new Error('No user info available');
+            }
 
             const response = await fetch(`${this.baseURL}/api/v1/refresh_token`, {
                 method: 'POST',
@@ -130,7 +237,6 @@ class APIService {
                 if (data.code === 401 || data.message.includes('refresh token')) {
                     // 刷新token过期或无效
                     this.clearTokens();
-                    window.location.href = '/login.html';
                 }
                 throw new Error(data.message || 'Failed to refresh token');
             }
@@ -150,13 +256,19 @@ class APIService {
             const clientCurrentTime = Math.floor(Date.now() / 1000); // 转换为秒级
             this.serverTimeOffset = serverCurrentTime - clientCurrentTime; // 秒级偏移量
 
-            this.saveTokens(token, refresh_token, access_token_expires_at, refresh_token_expires_at);
+            this.saveTokens(
+                token,
+                refresh_token,
+                access_token_expires_at,
+                refresh_token_expires_at,
+                this.getPersistentSessionEnabled()
+            );
 
             // 重置刷新尝试次数
             this.refreshAttempts = 0;
 
             // 处理刷新队列
-            this.refreshTokenQueue.forEach(cb => cb(token));
+            this.refreshTokenQueue.forEach(item => item.resolve(token));
             this.refreshTokenQueue = [];
 
             return token;
@@ -169,11 +281,10 @@ class APIService {
             } else {
                 // 刷新失败，清除所有tokens并跳转到登录页
                 this.clearTokens();
-                window.location.href = '/login.html';
+                this.refreshTokenQueue.forEach(item => item.reject(error));
+                this.refreshTokenQueue = [];
                 throw error;
             }
-        } finally {
-            this.isRefreshing = false;
         }
     }
 
@@ -185,34 +296,16 @@ class APIService {
             ...options.headers
         };
 
-        // 检查token是否即将过期
-        if (this.isAccessTokenExpiring()) {
-            if (!this.isRefreshing) {
-                this.isRefreshing = true;
-                try {
-                    const newToken = await this.refreshToken();
-                    headers['Authorization'] = `Bearer ${newToken}`;
-                } catch (error) {
-                    throw error;
-                }
-            } else {
-                // 等待token刷新完成
-                return new Promise((resolve, reject) => {
-                    this.refreshTokenQueue.push((newToken) => {
-                        headers['Authorization'] = `Bearer ${newToken}`;
-                        this._fetch(url, {...options, headers}).then(resolve).catch(reject);
-                    });
-                });
-            }
-        } else {
-            // 添加现有的token
-            const accessToken = this.getAccessToken();
-            if (accessToken) {
-                headers['Authorization'] = `Bearer ${accessToken}`;
-            }
+        const skipAuth = options.auth === false;
+        const requiresAuth = options.auth === true;
+        const hasAccessToken = !!this.getAccessToken();
+        if (!skipAuth && (requiresAuth || hasAccessToken)) {
+            const token = await this.ensureAccessToken();
+            headers['Authorization'] = `Bearer ${token}`;
         }
 
-        return this._fetch(url, {...options, headers});
+        const { auth, ...fetchOptions } = options;
+        return this._fetch(url, {...fetchOptions, headers, _skipAuth: skipAuth});
     }
 
     // 实际执行fetch请求
@@ -223,7 +316,7 @@ class APIService {
 
             if (!response.ok) {
                 // 处理401未授权错误
-                if (response.status === 401 && !options._retry) {
+                if (response.status === 401 && !options._retry && !options._skipAuth && this.getRefreshToken()) {
                     // 尝试刷新token并重新请求
                     if (!this.isRefreshing) {
                         this.isRefreshing = true;
@@ -234,14 +327,18 @@ class APIService {
                             return this._fetch(url, options);
                         } catch (error) {
                             throw error;
+                        } finally {
+                            this.isRefreshing = false;
                         }
                     } else {
-                        // 等待token刷新完成
                         return new Promise((resolve, reject) => {
-                            this.refreshTokenQueue.push((newToken) => {
-                                options.headers['Authorization'] = `Bearer ${newToken}`;
-                                options._retry = true;
-                                this._fetch(url, options).then(resolve).catch(reject);
+                            this.refreshTokenQueue.push({
+                                resolve: (newToken) => {
+                                    options.headers['Authorization'] = `Bearer ${newToken}`;
+                                    options._retry = true;
+                                    this._fetch(url, options).then(resolve).catch(reject);
+                                },
+                                reject
                             });
                         });
                     }
@@ -263,7 +360,8 @@ class APIService {
     async login(username, password, rememberMe = false) {
         const data = await this.request('/api/v1/login', {
             method: 'POST',
-            body: JSON.stringify({username, password})
+            body: JSON.stringify({username, password}),
+            auth: false
         });
 
         // 保存token和用户信息
@@ -302,7 +400,7 @@ class APIService {
                 experience,
                 level,
                 avatar: avatar || ''
-            });
+            }, rememberMe);
         }
 
         return data;

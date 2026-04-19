@@ -328,18 +328,8 @@
 
                 // 初始化表单数据
                 init() {
-                    // 检查localStorage中是否有保存的登录信息
                     const savedRememberMe = localStorage.getItem('purecpp_rememberMe');
-                    if (savedRememberMe === 'true') {
-                        const savedUsername = localStorage.getItem('purecpp_username');
-                        const savedPassword = localStorage.getItem('purecpp_password');
-
-                        if (savedUsername && savedPassword) {
-                            this.username = savedUsername;
-                            this.password = savedPassword;
-                            this.rememberMe = true;
-                        }
-                    }
+                    this.rememberMe = savedRememberMe === 'true';
                 },
 
                 // 显示消息函数
@@ -420,15 +410,10 @@
                         const response = await apiService.login(this.username.trim(), this.password, this.rememberMe);
 
                         if (response.success) {
-                            // 保存登录成功用户名、密码
                             if (this.rememberMe) {
                                 localStorage.setItem('purecpp_rememberMe', 'true');
-                                localStorage.setItem('purecpp_username', this.username);
-                                localStorage.setItem('purecpp_password', this.password);
                             } else {
                                 localStorage.removeItem('purecpp_rememberMe');
-                                localStorage.removeItem('purecpp_username');
-                                localStorage.removeItem('purecpp_password');
                             }
                             // 登录成功跳转到首页
                             window.location.href = '/index.html';

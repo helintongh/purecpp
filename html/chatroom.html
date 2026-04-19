@@ -905,18 +905,9 @@
 
         // ========== 初始化 ==========
         async function initApp() {
+            await apiService.restoreSessionIfNeeded();
             accessToken = apiService.getAccessToken();
             let userInfo = apiService.getUserInfo();
-
-            // access_token 存在 sessionStorage，刷新页面后会丢失；
-            // 但 refresh_token 在 localStorage，可以静默换新 token
-            if (!accessToken && apiService.getRefreshToken() && userInfo) {
-                try {
-                    accessToken = await apiService.refreshToken();
-                } catch (e) {
-                    console.warn('[chat] silent refresh failed', e);
-                }
-            }
 
             if (!accessToken || !userInfo) {
                 window.location.href = '/login.html';
@@ -1009,10 +1000,23 @@
         }
 
         // ========== REST API ==========
+        async function ensureChatAccessToken() {
+            accessToken = await apiService.ensureAccessToken();
+            return accessToken;
+        }
+
+        async function authorizedFetch(url, options = {}) {
+            const token = await ensureChatAccessToken();
+            const headers = {
+                ...(options.headers || {}),
+                'Authorization': 'Bearer ' + token
+            };
+
+            return fetch(url, { ...options, headers });
+        }
+
         async function loadChannels() {
-            const res = await fetch('/api/v1/chat/channels', {
-                headers: { 'Authorization': 'Bearer ' + accessToken }
-            });
+            const res = await authorizedFetch('/api/v1/chat/channels');
             if (res.status === 401) {
                 window.location.href = '/login.html';
                 return;
@@ -1032,10 +1036,9 @@
             if (msgs.length === 0) return;
             const lastId = msgs[msgs.length - 1].id;
             try {
-                await fetch('/api/v1/chat/mark_read', {
+                await authorizedFetch('/api/v1/chat/mark_read', {
                     method: 'POST',
                     headers: {
-                        'Authorization': 'Bearer ' + accessToken,
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ channel_id: channelId, last_message_id: lastId })
@@ -1048,7 +1051,7 @@
         async function loadHistory(channelId, beforeId = null) {
             let url = `/api/v1/chat/history?channel_id=${channelId}&limit=50`;
             if (beforeId) url += `&before_id=${beforeId}`;
-            const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + accessToken } });
+            const res = await authorizedFetch(url);
             if (!res.ok) {
                 messages[channelId] = [];
                 return;
@@ -1119,10 +1122,9 @@
         }
 
         async function createChannelApi(name, topic) {
-            const res = await fetch('/api/v1/chat/channel', {
+            const res = await authorizedFetch('/api/v1/chat/channel', {
                 method: 'POST',
                 headers: {
-                    'Authorization': 'Bearer ' + accessToken,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ name, topic, is_private: 0 })
@@ -1133,10 +1135,9 @@
         }
 
         async function deleteChannelApi(channelId) {
-            const res = await fetch('/api/v1/chat/delete_channel', {
+            const res = await authorizedFetch('/api/v1/chat/delete_channel', {
                 method: 'POST',
                 headers: {
-                    'Authorization': 'Bearer ' + accessToken,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ channel_id: channelId })
@@ -1164,10 +1165,18 @@
         let intentionalClose = false;  // 主动登出时置 true，阻止自动重连
 
         // ========== WebSocket ==========
-        function connectWebSocket() {
+        async function connectWebSocket() {
             if (ws) {
                 try { ws.close(); } catch (e) {}
                 ws = null;
+            }
+
+            try {
+                accessToken = await apiService.ensureAccessToken();
+            } catch (e) {
+                console.warn('[chat] unable to restore websocket session', e);
+                window.location.href = '/login.html';
+                return;
             }
 
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1669,6 +1678,9 @@
                 spellChecker: false,
                 status: false,
                 placeholder: '输入消息... 支持 Markdown，使用@提及用户',
+                insertTexts: {
+                    link: ['[', '](https://)']
+                },
                 toolbar: [
                     'bold', 'italic', 'strikethrough', '|',
                     'code', 'quote', '|',
@@ -1744,10 +1756,9 @@
             reader.onload = async () => {
                 const base64 = reader.result.split(',')[1];
                 try {
-                    const res = await fetch('/api/v1/chat/upload', {
+                    const res = await authorizedFetch('/api/v1/chat/upload', {
                         method: 'POST',
                         headers: {
-                            'Authorization': 'Bearer ' + accessToken,
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({ filename: file.name, file_data: base64 })

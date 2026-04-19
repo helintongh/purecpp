@@ -186,7 +186,7 @@ function toggleMenu() {
 // 用户信息显示逻辑统一封装
 
 // 检查用户是否登录
-function checkUserLogin() {
+async function checkUserLogin() {
     if (typeof apiService === 'undefined') {
         const loginLink = document.getElementById('login-link');
         const registerLink = document.getElementById('register-link');
@@ -196,6 +196,8 @@ function checkUserLogin() {
         if (userInfoElement) userInfoElement.style.display = 'none';
         return;
     }
+
+    await apiService.restoreSessionIfNeeded();
 
     // 使用apiService获取用户信息和token
     const userInfo = apiService.getUserInfo();
@@ -302,8 +304,8 @@ function addUserButtonHoverEffect() {
 }
 
 // 初始化所有用户信息相关功能
-function initUserInfo() {
-    checkUserLogin();
+async function initUserInfo() {
+    await checkUserLogin();
     initUserMenu();
     addUserMenuHoverEffects();
     addUserButtonHoverEffect();

@@ -541,6 +541,8 @@
             totalPages: 0,
 
             async init() {
+                await apiService.restoreSessionIfNeeded();
+
                 // 1. 权限校验 - 使用apiService获取用户信息
                 this.currentUser = apiService.getUserInfo();
                 if (this.currentUser) {

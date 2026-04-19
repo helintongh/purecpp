@@ -17,8 +17,10 @@ public:
     }
 
     // 先删除该用户已有的邮箱验证token
-    conn->delete_records_s<users_token_t>("user_id = ? and token_type = ?",
-                                          user_id, TokenType::VERIFY_EMAIL);
+    conn->remove<users_token_t>()
+        .where(col(&users_token_t::user_id) == user_id &&
+               col(&users_token_t::token_type) == TokenType::VERIFY_EMAIL)
+        .execute();
 
     // 使用统一的token生成函数
     std::string token = generate_token(TokenType::VERIFY_EMAIL);
@@ -76,8 +78,10 @@ public:
     }
 
     // 验证通过后删除该token，因为邮箱验证token通常只需要使用一次
-    conn->delete_records_s<users_token_t>("token = ? and token_type = ?", token,
-                                          TokenType::VERIFY_EMAIL);
+    conn->remove<users_token_t>()
+        .where(col(&users_token_t::token) == token &&
+               col(&users_token_t::token_type) == TokenType::VERIFY_EMAIL)
+        .execute();
 
     return true;
   }

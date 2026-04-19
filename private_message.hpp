@@ -75,7 +75,10 @@ YLT_REFL(blocked_user_view, user_id, user_name, created_at);
 inline bool can_use_private_message(uint64_t user_id) {
   auto conn = get_db_pool().get();
   if (!conn) return false;
-  auto users = conn->query_s<users_t>("id = ?", user_id);
+  auto users = conn->select(ormpp::all)
+                   .from<users_t>()
+                   .where(col(&users_t::id).param())
+                   .collect(user_id);
   return !users.empty();
 }
 
@@ -91,7 +94,10 @@ inline bool parse_u64(std::string_view raw, uint64_t &value) {
 
 template <typename Conn>
 inline std::string get_user_name_by_id(Conn &conn, uint64_t user_id) {
-  auto users = conn->template query_s<users_t>("id = ?", user_id);
+  auto users = conn->select(ormpp::all)
+                   .from<users_t>()
+                   .where(col(&users_t::id).param())
+                   .collect(user_id);
   return users.empty() ? "" : array_to_string(users[0].user_name);
 }
 
@@ -99,8 +105,11 @@ inline std::string get_user_name_by_id(Conn &conn, uint64_t user_id) {
 inline bool is_blocked_by(uint64_t target_user_id, uint64_t user_id) {
   auto conn = get_db_pool().get();
   if (!conn) return false;
-  auto rows = conn->query_s<pm_blocklist_t>(
-      "user_id = ? AND blocked_user_id = ?", target_user_id, user_id);
+  auto rows = conn->select(ormpp::all)
+                  .from<pm_blocklist_t>()
+                  .where(col(&pm_blocklist_t::user_id).param() &&
+                         col(&pm_blocklist_t::blocked_user_id).param())
+                  .collect(target_user_id, user_id);
   return !rows.empty();
 }
 
@@ -144,7 +153,10 @@ public:
     uint64_t receiver_id = 0;
     std::vector<users_t> receivers;
     if (!body.receiver_name.empty()) {
-      receivers = conn->query_s<users_t>("user_name = ?", body.receiver_name);
+      receivers = conn->select(ormpp::all)
+                      .from<users_t>()
+                      .where(col(&users_t::user_name).param())
+                      .collect(body.receiver_name);
       if (!receivers.empty()) {
         receiver_id = receivers[0].id;
       }
@@ -153,7 +165,10 @@ public:
         resp.set_status_and_content(status_type::bad_request, make_error("接收者参数错误"));
         return;
       }
-      receivers = conn->query_s<users_t>("id = ?", receiver_id);
+      receivers = conn->select(ormpp::all)
+                      .from<users_t>()
+                      .where(col(&users_t::id).param())
+                      .collect(receiver_id);
     }
     if (receivers.empty()) {
       resp.set_status_and_content(status_type::bad_request, make_error("接收者不存在"));
@@ -199,10 +214,13 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    auto msgs = conn->query_s<private_message_t>(
-        "receiver_id = ? AND deleted_by_receiver = 0 "
-        "ORDER BY created_at DESC",
-        user_id);
+    auto msgs =
+        conn->select(ormpp::all)
+            .from<private_message_t>()
+            .where(col(&private_message_t::receiver_id).param() &&
+                   col(&private_message_t::deleted_by_receiver) == 0)
+            .order_by(col(&private_message_t::created_at).desc())
+            .collect(user_id);
 
     std::vector<pm_mailbox_item_view> convs;
     convs.reserve(msgs.size());
@@ -240,10 +258,13 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    auto msgs = conn->query_s<private_message_t>(
-        "sender_id = ? AND deleted_by_sender = 0 "
-        "ORDER BY created_at DESC",
-        user_id);
+    auto msgs =
+        conn->select(ormpp::all)
+            .from<private_message_t>()
+            .where(col(&private_message_t::sender_id).param() &&
+                   col(&private_message_t::deleted_by_sender) == 0)
+            .order_by(col(&private_message_t::created_at).desc())
+            .collect(user_id);
 
     std::vector<pm_mailbox_item_view> items;
     items.reserve(msgs.size());
@@ -308,16 +329,26 @@ public:
     if (!conn) { set_server_internel_error(resp); return; }
 
     // 软删除过滤：我发的且我没删，或对方发的且我没删
-    auto msgs = conn->query_s<private_message_t>(
-        "(sender_id = ? AND receiver_id = ? AND deleted_by_sender = 0) OR "
-        "(sender_id = ? AND receiver_id = ? AND deleted_by_receiver = 0) "
-        "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        user_id, peer_id, peer_id, user_id, page_size, offset);
+    auto history_where =
+        (col(&private_message_t::sender_id) == user_id &&
+         col(&private_message_t::receiver_id) == peer_id &&
+         col(&private_message_t::deleted_by_sender) == 0) ||
+        (col(&private_message_t::sender_id) == peer_id &&
+         col(&private_message_t::receiver_id) == user_id &&
+         col(&private_message_t::deleted_by_receiver) == 0);
 
-    auto all = conn->query_s<private_message_t>(
-        "(sender_id = ? AND receiver_id = ? AND deleted_by_sender = 0) OR "
-        "(sender_id = ? AND receiver_id = ? AND deleted_by_receiver = 0)",
-        user_id, peer_id, peer_id, user_id);
+    auto msgs = conn->select(ormpp::all)
+                    .from<private_message_t>()
+                    .where(history_where)
+                    .order_by(col(&private_message_t::created_at).desc())
+                    .limit(page_size)
+                    .offset(offset)
+                    .collect();
+
+    auto all = conn->select(ormpp::all)
+                   .from<private_message_t>()
+                   .where(history_where)
+                   .collect();
     int total = static_cast<int>(all.size());
 
     std::unordered_map<uint64_t, std::string> user_names;
@@ -325,7 +356,10 @@ public:
     views.reserve(msgs.size());
     for (auto &m : msgs) {
       if (!user_names.count(m.sender_id)) {
-        auto users = conn->query_s<users_t>("id = ?", m.sender_id);
+        auto users = conn->select(ormpp::all)
+                         .from<users_t>()
+                         .where(col(&users_t::id).param())
+                         .collect(m.sender_id);
         user_names[m.sender_id] = users.empty() ? "" : array_to_string(users[0].user_name);
       }
       views.push_back({std::to_string(m.id), std::to_string(m.sender_id),
@@ -356,7 +390,10 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto rows = conn->query_s<private_message_t>("id = ?", msg_id);
+    auto rows = conn->select(ormpp::all)
+                    .from<private_message_t>()
+                    .where(col(&private_message_t::id).param())
+                    .collect(msg_id);
     if (rows.empty()) {
       resp.set_status_and_content(status_type::not_found, make_error("消息不存在"));
       return;
@@ -366,9 +403,18 @@ public:
       resp.set_status_and_content(status_type::forbidden, make_error("无权操作"));
       return;
     }
-    if (m.sender_id == user_id) m.deleted_by_sender = 1;
-    if (m.receiver_id == user_id) m.deleted_by_receiver = 1;
-    conn->update(m);
+    if (m.sender_id == user_id) {
+      conn->update<private_message_t>()
+          .set(col(&private_message_t::deleted_by_sender), 1)
+          .where(col(&private_message_t::id) == msg_id)
+          .execute();
+    }
+    if (m.receiver_id == user_id) {
+      conn->update<private_message_t>()
+          .set(col(&private_message_t::deleted_by_receiver), 1)
+          .where(col(&private_message_t::id) == msg_id)
+          .execute();
+    }
     resp.set_status_and_content(status_type::ok, make_success("删除成功"));
   }
 
@@ -390,9 +436,18 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto unread = conn->query_s<private_message_t>(
-        "sender_id = ? AND receiver_id = ? AND is_read = 0", sender_id, user_id);
-    for (auto &m : unread) { m.is_read = 1; conn->update(m); }
+    auto unread = conn->select(ormpp::all)
+                      .from<private_message_t>()
+                      .where(col(&private_message_t::sender_id).param() &&
+                             col(&private_message_t::receiver_id).param() &&
+                             col(&private_message_t::is_read) == 0)
+                      .collect(sender_id, user_id);
+    for (auto &m : unread) {
+      conn->update<private_message_t>()
+          .set(col(&private_message_t::is_read), 1)
+          .where(col(&private_message_t::id) == m.id)
+          .execute();
+    }
     resp.set_status_and_content(status_type::ok, make_success("已标记为已读"));
   }
 
@@ -410,8 +465,12 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto unread = conn->query_s<private_message_t>(
-        "receiver_id = ? AND is_read = 0 AND deleted_by_receiver = 0", user_id);
+    auto unread = conn->select(ormpp::all)
+                      .from<private_message_t>()
+                      .where(col(&private_message_t::receiver_id).param() &&
+                             col(&private_message_t::is_read) == 0 &&
+                             col(&private_message_t::deleted_by_receiver) == 0)
+                      .collect(user_id);
     resp.set_status_and_content(status_type::ok,
         make_data(static_cast<uint64_t>(unread.size()), "获取未读数成功"));
   }
@@ -436,8 +495,11 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
     // 已拉黑则幂等返回成功
-    auto existing = conn->query_s<pm_blocklist_t>(
-        "user_id = ? AND blocked_user_id = ?", user_id, target_user_id);
+    auto existing = conn->select(ormpp::all)
+                        .from<pm_blocklist_t>()
+                        .where(col(&pm_blocklist_t::user_id).param() &&
+                               col(&pm_blocklist_t::blocked_user_id).param())
+                        .collect(user_id, target_user_id);
     if (!existing.empty()) {
       resp.set_status_and_content(status_type::ok, make_success("已在黑名单中"));
       return;
@@ -470,9 +532,16 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto rows = conn->query_s<pm_blocklist_t>(
-        "user_id = ? AND blocked_user_id = ?", user_id, target_id);
-    for (auto &bl : rows) conn->delete_records_s<pm_blocklist_t>("id = ?", bl.id);
+    auto rows = conn->select(ormpp::all)
+                    .from<pm_blocklist_t>()
+                    .where(col(&pm_blocklist_t::user_id).param() &&
+                           col(&pm_blocklist_t::blocked_user_id).param())
+                    .collect(user_id, target_id);
+    for (auto &bl : rows) {
+      conn->remove<pm_blocklist_t>()
+          .where(col(&pm_blocklist_t::id) == bl.id)
+          .execute();
+    }
     resp.set_status_and_content(status_type::ok, make_success("已解除拉黑"));
   }
 
@@ -486,11 +555,17 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto rows = conn->query_s<pm_blocklist_t>("user_id = ?", user_id);
+    auto rows = conn->select(ormpp::all)
+                    .from<pm_blocklist_t>()
+                    .where(col(&pm_blocklist_t::user_id).param())
+                    .collect(user_id);
 
     std::vector<blocked_user_view> result;
     for (auto &bl : rows) {
-      auto users = conn->query_s<users_t>("id = ?", bl.blocked_user_id);
+      auto users = conn->select(ormpp::all)
+                       .from<users_t>()
+                       .where(col(&users_t::id).param())
+                       .collect(bl.blocked_user_id);
       blocked_user_view v{};
       v.user_id = std::to_string(bl.blocked_user_id);
       v.user_name = users.empty() ? "" : array_to_string(users[0].user_name);
@@ -507,13 +582,22 @@ public:
 inline bool init_pm_db() {
   auto conn = get_db_pool().get();
   if (!conn) return false;
-  bool ok1 = conn->create_datatable<private_message_t>(
-      ormpp_auto_key{"id"},
-      ormpp_not_null{{"sender_id", "receiver_id", "content", "is_read",
-                      "deleted_by_sender", "deleted_by_receiver", "created_at"}});
-  bool ok2 = conn->create_datatable<pm_blocklist_t>(
-      ormpp_auto_key{"id"},
-      ormpp_not_null{{"user_id", "blocked_user_id", "created_at"}});
+  bool ok1 = conn->create_table<private_message_t>()
+                 .auto_increment(col(&private_message_t::id))
+                 .not_null(col(&private_message_t::sender_id),
+                           col(&private_message_t::receiver_id),
+                           col(&private_message_t::content),
+                           col(&private_message_t::is_read),
+                           col(&private_message_t::deleted_by_sender),
+                           col(&private_message_t::deleted_by_receiver),
+                           col(&private_message_t::created_at))
+                 .execute();
+  bool ok2 = conn->create_table<pm_blocklist_t>()
+                 .auto_increment(col(&pm_blocklist_t::id))
+                 .not_null(col(&pm_blocklist_t::user_id),
+                           col(&pm_blocklist_t::blocked_user_id),
+                           col(&pm_blocklist_t::created_at))
+                 .execute();
   if (!ok1) CINATRA_LOG_ERROR << "Table 'private_messages' create error.";
   if (!ok2) CINATRA_LOG_ERROR << "Table 'pm_blocklist' create error.";
   return ok1 && ok2;

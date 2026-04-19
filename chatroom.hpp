@@ -430,7 +430,10 @@ build_reaction_views_from(const std::vector<chat_reaction_t> &rs) {
 inline std::vector<chat_reaction_view> build_reaction_views(uint64_t msg_id) {
   auto conn = get_db_pool().get();
   if (!conn) return {};
-  auto rs = conn->query_s<chat_reaction_t>("message_id = ?", msg_id);
+  auto rs = conn->select(ormpp::all)
+                .from<chat_reaction_t>()
+                .where(col(&chat_reaction_t::message_id).param())
+                .collect(msg_id);
   return build_reaction_views_from(rs);
 }
 
@@ -445,15 +448,21 @@ batch_build_reactions(const std::vector<chat_message_t> &msgs) {
     return result;
   }
 
-  std::ostringstream id_list;
-  id_list << "message_id IN (";
-  for (size_t i = 0; i < msgs.size(); i++) {
-    if (i) id_list << ",";
-    id_list << msgs[i].id;
+  std::vector<uint64_t> msg_ids;
+  msg_ids.reserve(msgs.size());
+  for (auto &m : msgs) {
+    msg_ids.push_back(m.id);
   }
-  id_list << ")";
 
-  auto all_reactions = conn->query<chat_reaction_t>(id_list.str());
+  auto cond = col(&chat_reaction_t::message_id) == msg_ids[0];
+  for (size_t i = 1; i < msg_ids.size(); ++i) {
+    cond = cond || (col(&chat_reaction_t::message_id) == msg_ids[i]);
+  }
+
+  auto all_reactions = conn->select(ormpp::all)
+                           .from<chat_reaction_t>()
+                           .where(cond)
+                           .collect();
   std::unordered_map<uint64_t, std::vector<chat_reaction_t>> grouped;
   for (auto &r : all_reactions) {
     grouped[r.message_id].push_back(r);
@@ -674,7 +683,10 @@ public:
 
     chat_channel_cache_entry entry{};
     entry.expires_at = now + ttl_ms_;
-    auto rows = conn->query_s<chat_channel_t>("id = ?", channel_id);
+    auto rows = conn->select(ormpp::all)
+                    .from<chat_channel_t>()
+                    .where(col(&chat_channel_t::id).param())
+                    .collect(channel_id);
     if (!rows.empty()) {
       entry.exists = true;
       entry.creator_id = rows[0].creator_id;
@@ -1044,23 +1056,35 @@ inline bool init_chat_db() {
     exec_or_throw("DROP TABLE IF EXISTS chat_users");
     exec_or_throw("DROP TABLE IF EXISTS chat_user_t");
 #else
-    if (!conn->create_datatable<chat_channel_t>(ormpp_auto_key{"id"},
-                                                ormpp_unique{{"name"}})) {
+    if (!conn->create_table<chat_channel_t>()
+             .auto_increment(col(&chat_channel_t::id))
+             .unique(col(&chat_channel_t::name))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
-    if (!conn->create_datatable<chat_message_t>(ormpp_auto_key{"id"})) {
+    if (!conn->create_table<chat_message_t>()
+             .auto_increment(col(&chat_message_t::id))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
-    if (!conn->create_datatable<chat_reaction_t>(ormpp_auto_key{"id"})) {
+    if (!conn->create_table<chat_reaction_t>()
+             .auto_increment(col(&chat_reaction_t::id))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
-    if (!conn->create_datatable<chat_read_position_t>(ormpp_auto_key{"id"})) {
+    if (!conn->create_table<chat_read_position_t>()
+             .auto_increment(col(&chat_read_position_t::id))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
-    if (!conn->create_datatable<chat_channel_member_t>(ormpp_auto_key{"id"})) {
+    if (!conn->create_table<chat_channel_member_t>()
+             .auto_increment(col(&chat_channel_member_t::id))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
-    if (!conn->create_datatable<chat_mute_t>(ormpp_auto_key{"id"})) {
+    if (!conn->create_table<chat_mute_t>()
+             .auto_increment(col(&chat_mute_t::id))
+             .execute()) {
       throw std::runtime_error(conn->get_last_error());
     }
 
@@ -1118,7 +1142,7 @@ inline bool init_chat_db() {
 #endif
 
     // Seed channels
-    auto channels = conn->query<chat_channel_t>();
+    auto channels = conn->select(ormpp::all).from<chat_channel_t>().collect();
     if (channels.empty()) {
       const char *seeds[][2] = {
         {"通用聊天", "欢迎来到 PureCpp 社区聊天室！"},
@@ -1139,23 +1163,32 @@ inline bool init_chat_db() {
     }
 
     // Check if backfill is needed (any message with channel_seq = 0)
-    auto need_backfill = conn->query<chat_message_t>("channel_seq = 0 LIMIT 1");
+    auto need_backfill = conn->select(ormpp::all)
+                            .from<chat_message_t>()
+                            .where(col(&chat_message_t::channel_seq) == 0)
+                            .limit(1)
+                            .collect();
     std::unordered_map<uint64_t, uint64_t> message_seq_by_id;
-    auto all_channels = conn->query<chat_channel_t>();
+    auto all_channels = conn->select(ormpp::all).from<chat_channel_t>().collect();
 
     if (!need_backfill.empty()) {
       CINATRA_LOG_INFO << "Backfilling channel_seq for messages...";
       for (auto &channel : all_channels) {
-        auto msgs = conn->query<chat_message_t>(
-            "channel_id=" + std::to_string(channel.id) +
-            " ORDER BY created_at ASC, id ASC");
+        auto msgs = conn->select(ormpp::all)
+                        .from<chat_message_t>()
+                        .where(col(&chat_message_t::channel_id) == channel.id)
+                        .order_by(col(&chat_message_t::created_at).asc(),
+                                  col(&chat_message_t::id).asc())
+                        .collect();
         uint64_t seq = 0;
         for (auto &msg : msgs) {
           ++seq;
           if (msg.channel_seq != seq) {
             msg.channel_seq = seq;
-            if (conn->update_some<&chat_message_t::channel_seq>(
-                    msg, "id=" + std::to_string(msg.id)) != 1) {
+            if (conn->update<chat_message_t>()
+                    .set(col(&chat_message_t::channel_seq), seq)
+                    .where(col(&chat_message_t::id) == msg.id)
+                    .execute() != 1) {
               throw std::runtime_error("Failed to backfill chat_message.channel_seq");
             }
           }
@@ -1164,15 +1197,18 @@ inline bool init_chat_db() {
 
         if (channel.message_count != seq) {
           channel.message_count = seq;
-          if (conn->update_some<&chat_channel_t::message_count>(
-                  channel, "id=" + std::to_string(channel.id)) != 1) {
+          if (conn->update<chat_channel_t>()
+                  .set(col(&chat_channel_t::message_count), seq)
+                  .where(col(&chat_channel_t::id) == channel.id)
+                  .execute() != 1) {
             throw std::runtime_error("Failed to backfill chat_channel.message_count");
           }
         }
         chat_channel_cache::instance().put(channel);
       }
 
-      auto read_positions = conn->query<chat_read_position_t>();
+      auto read_positions =
+          conn->select(ormpp::all).from<chat_read_position_t>().collect();
       for (auto &position : read_positions) {
         uint64_t seq = 0;
         auto it = message_seq_by_id.find(position.last_read_message_id);
@@ -1182,8 +1218,10 @@ inline bool init_chat_db() {
 
         if (position.last_read_channel_seq != seq) {
           position.last_read_channel_seq = seq;
-          if (conn->update_some<&chat_read_position_t::last_read_channel_seq>(
-                  position, "id=" + std::to_string(position.id)) != 1) {
+          if (conn->update<chat_read_position_t>()
+                  .set(col(&chat_read_position_t::last_read_channel_seq), seq)
+                  .where(col(&chat_read_position_t::id) == position.id)
+                  .execute() != 1) {
             throw std::runtime_error(
                 "Failed to backfill chat_read_position.last_read_channel_seq");
           }
@@ -1611,7 +1649,7 @@ public:
 
     uint64_t user_id = get_user_id_from_token(req);
 
-    auto channels = conn->query<chat_channel_t>();
+    auto channels = conn->select(ormpp::all).from<chat_channel_t>().collect();
     if (channels.empty()) {
       resp.set_content_type<resp_content_type::json>();
       resp.set_status_and_content(
@@ -1624,13 +1662,18 @@ public:
     std::unordered_map<uint64_t, uint64_t> last_read_seq_map;
     std::set<uint64_t> joined_private_channels;
     if (user_id > 0) {
-      auto positions = conn->query_s<chat_read_position_t>(
-          "user_id = ?", user_id);
+      auto positions = conn->select(ormpp::all)
+                           .from<chat_read_position_t>()
+                           .where(col(&chat_read_position_t::user_id).param())
+                           .collect(user_id);
       for (auto &p : positions) {
         last_read_seq_map[p.channel_id] = p.last_read_channel_seq;
       }
-      auto memberships = conn->query_s<chat_channel_member_t>(
-          "user_id = ?", user_id);
+      auto memberships = conn->select(ormpp::all)
+                             .from<chat_channel_member_t>()
+                             .where(
+                                 col(&chat_channel_member_t::user_id).param())
+                             .collect(user_id);
       for (auto &m : memberships) {
         joined_private_channels.insert(m.channel_id);
       }
@@ -1704,8 +1747,11 @@ public:
 
     uint64_t last_read_seq = 0;
     if (info.last_message_id > 0) {
-      auto msgs = conn->query_s<chat_message_t>(
-          "id = ? AND channel_id = ?", info.last_message_id, info.channel_id);
+      auto msgs = conn->select(ormpp::all)
+                      .from<chat_message_t>()
+                      .where(col(&chat_message_t::id).param() &&
+                             col(&chat_message_t::channel_id).param())
+                      .collect(info.last_message_id, info.channel_id);
       if (msgs.empty()) {
         resp.set_status_and_content(status_type::bad_request,
                                     make_error("消息不存在"));
@@ -1714,8 +1760,11 @@ public:
       last_read_seq = msgs[0].channel_seq;
     }
 
-    auto positions = conn->query_s<chat_read_position_t>(
-        "user_id = ? AND channel_id = ?", user_id, info.channel_id);
+    auto positions = conn->select(ormpp::all)
+                         .from<chat_read_position_t>()
+                         .where(col(&chat_read_position_t::user_id).param() &&
+                                col(&chat_read_position_t::channel_id).param())
+                         .collect(user_id, info.channel_id);
     if (positions.empty()) {
       chat_read_position_t p{};
       p.user_id = user_id;
@@ -1840,16 +1889,23 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    std::string where = "channel_id=" + std::to_string(channel_id);
+    auto query = conn->select(ormpp::all)
+                     .from<chat_message_t>()
+                     .where(col(&chat_message_t::channel_id) == channel_id);
     if (!before_str.empty()) {
       uint64_t before_id = 0;
       try { before_id = std::stoull(before_str); } catch (...) {}
-      if (before_id > 0)
-        where += " AND id<" + std::to_string(before_id);
+      if (before_id > 0) {
+        query = conn->select(ormpp::all)
+                    .from<chat_message_t>()
+                    .where(col(&chat_message_t::channel_id) == channel_id &&
+                           col(&chat_message_t::id) < before_id);
+      }
     }
 
-    auto msgs = conn->query<chat_message_t>(
-        where + " ORDER BY id DESC LIMIT " + std::to_string(limit));
+    auto msgs = query.order_by(col(&chat_message_t::id).desc())
+                    .limit(limit)
+                    .collect();
     std::reverse(msgs.begin(), msgs.end());
 
     bool has_more = (msgs.size() == static_cast<size_t>(limit));
@@ -1901,13 +1957,20 @@ public:
     std::vector<chat_message_t> msgs;
     std::string like_pattern = "%" + escape_sql_like(q) + "%";
     if (ch_str.empty()) {
-      msgs = conn->query_s<chat_message_t>(
-          "content LIKE ? ORDER BY created_at DESC LIMIT 100",
-          like_pattern);
+      msgs = conn->select(ormpp::all)
+                 .from<chat_message_t>()
+                 .where(col(&chat_message_t::content).like(like_pattern))
+                 .order_by(col(&chat_message_t::created_at).desc())
+                 .limit(100)
+                 .collect();
     } else {
-      msgs = conn->query_s<chat_message_t>(
-          "channel_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 100",
-          channel_id, like_pattern);
+      msgs = conn->select(ormpp::all)
+                 .from<chat_message_t>()
+                 .where(col(&chat_message_t::channel_id).param() &&
+                        col(&chat_message_t::content).like(like_pattern))
+                 .order_by(col(&chat_message_t::created_at).desc())
+                 .limit(100)
+                 .collect(channel_id);
     }
 
     // Batch load reactions (avoid N+1)
@@ -2036,7 +2099,10 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    auto channels = conn->query_s<chat_channel_t>("id = ?", info.channel_id);
+    auto channels = conn->select(ormpp::all)
+                        .from<chat_channel_t>()
+                        .where(col(&chat_channel_t::id).param())
+                        .collect(info.channel_id);
     if (channels.empty()) {
       resp.set_status_and_content(status_type::not_found,
                                   make_error("频道不存在", 404));
@@ -2048,14 +2114,27 @@ public:
       return;
     }
 
-    auto msgs = conn->query_s<chat_message_t>("channel_id = ?", info.channel_id);
+    auto msgs = conn->select(ormpp::all)
+                    .from<chat_message_t>()
+                    .where(col(&chat_message_t::channel_id).param())
+                    .collect(info.channel_id);
     for (auto &msg : msgs) {
-      conn->delete_records_s<chat_reaction_t>("message_id = ?", msg.id);
+      conn->remove<chat_reaction_t>()
+          .where(col(&chat_reaction_t::message_id) == msg.id)
+          .execute();
     }
-    conn->delete_records_s<chat_message_t>("channel_id = ?", info.channel_id);
-    conn->delete_records_s<chat_read_position_t>("channel_id = ?", info.channel_id);
-    conn->delete_records_s<chat_channel_member_t>("channel_id = ?", info.channel_id);
-    conn->delete_records_s<chat_channel_t>("id = ?", info.channel_id);
+    conn->remove<chat_message_t>()
+        .where(col(&chat_message_t::channel_id) == info.channel_id)
+        .execute();
+    conn->remove<chat_read_position_t>()
+        .where(col(&chat_read_position_t::channel_id) == info.channel_id)
+        .execute();
+    conn->remove<chat_channel_member_t>()
+        .where(col(&chat_channel_member_t::channel_id) == info.channel_id)
+        .execute();
+    conn->remove<chat_channel_t>()
+        .where(col(&chat_channel_t::id) == info.channel_id)
+        .execute();
 
     if (!conn->commit()) {
       conn->rollback();
@@ -2111,9 +2190,10 @@ public:
     if (!conn) { set_server_internel_error(resp); return; }
 
     // 先删除旧记录（同用户同频道），再插入新记录（UPSERT 语义）
-    conn->execute("DELETE FROM chat_mutes WHERE user_id=" +
-                  std::to_string(info.user_id) +
-                  " AND channel_id=" + std::to_string(info.channel_id));
+    conn->remove<chat_mute_t>()
+        .where(col(&chat_mute_t::user_id) == info.user_id &&
+               col(&chat_mute_t::channel_id) == info.channel_id)
+        .execute();
 
     auto now = get_timestamp_milliseconds();
     chat_mute_t mute{};
@@ -2163,9 +2243,10 @@ public:
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    conn->execute("DELETE FROM chat_mutes WHERE user_id=" +
-                  std::to_string(info.user_id) +
-                  " AND channel_id=" + std::to_string(info.channel_id));
+    conn->remove<chat_mute_t>()
+        .where(col(&chat_mute_t::user_id) == info.user_id &&
+               col(&chat_mute_t::channel_id) == info.channel_id)
+        .execute();
 
     // 广播解禁通知
     std::ostringstream ws_os;
@@ -2202,7 +2283,10 @@ public:
     {
       auto c = get_db_pool().get();
       if (c) {
-        auto us = c->query_s<users_t>("id = ?", user_id);
+        auto us = c->select(ormpp::all)
+                      .from<users_t>()
+                      .where(col(&users_t::id).param())
+                      .collect(user_id);
         if (!us.empty()) user_name = arr_to_str(us[0].user_name);
       }
     }
@@ -2326,7 +2410,10 @@ private:
     auto conn = get_db_pool().get();
     if (!conn) return false;
 
-    auto users = conn->query_s<users_t>("id = ?", user_id);
+    auto users = conn->select(ormpp::all)
+                     .from<users_t>()
+                     .where(col(&users_t::id).param())
+                     .collect(user_id);
     if (users.empty()) return false;
 
     auto role = users[0].role;
@@ -2337,10 +2424,13 @@ private:
     auto conn = get_db_pool().get();
     if (!conn) return false;
     auto now = get_timestamp_milliseconds();
-    auto mutes = conn->query<chat_mute_t>(
-        "user_id=" + std::to_string(user_id) +
-        " AND (channel_id=0 OR channel_id=" + std::to_string(channel_id) + ")" +
-        " AND muted_until>" + std::to_string(now));
+    auto mutes = conn->select(ormpp::all)
+                     .from<chat_mute_t>()
+                     .where(col(&chat_mute_t::user_id) == user_id &&
+                            (col(&chat_mute_t::channel_id) == 0 ||
+                             col(&chat_mute_t::channel_id) == channel_id) &&
+                            col(&chat_mute_t::muted_until) > now)
+                     .collect();
     return !mutes.empty();
   }
 
@@ -2360,8 +2450,11 @@ private:
     auto conn = get_db_pool().get();
     if (!conn) return false;
 
-    auto members = conn->query_s<chat_channel_member_t>(
-        "channel_id = ? AND user_id = ?", channel_id, user_id);
+    auto members = conn->select(ormpp::all)
+                       .from<chat_channel_member_t>()
+                       .where(col(&chat_channel_member_t::channel_id).param() &&
+                              col(&chat_channel_member_t::user_id).param())
+                       .collect(channel_id, user_id);
     allowed = !members.empty();
     chat_access_cache::instance().put(user_id, channel_id, allowed);
     return allowed;
@@ -2389,10 +2482,13 @@ private:
       auto mute_conn = get_db_pool().get();
       if (mute_conn) {
         auto now = get_timestamp_milliseconds();
-        auto mutes = mute_conn->query<chat_mute_t>(
-            "user_id=" + std::to_string(user_id) +
-            " AND (channel_id=0 OR channel_id=" + std::to_string(channel_id) + ")" +
-            " AND muted_until>" + std::to_string(now));
+        auto mutes = mute_conn->select(ormpp::all)
+                         .from<chat_mute_t>()
+                         .where(col(&chat_mute_t::user_id) == user_id &&
+                                (col(&chat_mute_t::channel_id) == 0 ||
+                                 col(&chat_mute_t::channel_id) == channel_id) &&
+                                col(&chat_mute_t::muted_until) > now)
+                         .collect();
         if (!mutes.empty()) {
           std::ostringstream err_os;
           err_os << R"({"type":"error","msg":"您已被禁言，禁言将于 )"
@@ -2427,7 +2523,10 @@ private:
       if (!conn) co_return;
       if (!conn->begin()) co_return;
 
-      auto latest = conn->query_s<chat_channel_t>("id = ?", channel_id);
+      auto latest = conn->select(ormpp::all)
+                        .from<chat_channel_t>()
+                        .where(col(&chat_channel_t::id).param())
+                        .collect(channel_id);
       if (latest.empty()) {
         conn->rollback();
         co_return;
@@ -2441,9 +2540,10 @@ private:
         co_return;
       }
 
-      latest[0].message_count = next_seq;
-      if (conn->update_some<&chat_channel_t::message_count>(
-              latest[0], "id=" + std::to_string(channel_id)) != 1) {
+      if (conn->update<chat_channel_t>()
+              .set(col(&chat_channel_t::message_count), next_seq)
+              .where(col(&chat_channel_t::id) == channel_id)
+              .execute() != 1) {
         conn->rollback();
         co_return;
       }
@@ -2491,17 +2591,24 @@ private:
     {
       auto conn = get_db_pool().get();
       if (!conn) co_return;
-      auto msgs = conn->query_s<chat_message_t>("id = ?", message_id);
+      auto msgs = conn->select(ormpp::all)
+                      .from<chat_message_t>()
+                      .where(col(&chat_message_t::id).param())
+                      .collect(message_id);
       if (msgs.empty()) co_return;
       channel_id = msgs[0].channel_id;
       if (!user_can_access_channel(user_id, channel_id)) co_return;
 
-      auto existing = conn->query_s<chat_reaction_t>(
-          "message_id = ? AND user_id = ? AND emoji = ?",
-          message_id, user_id, emoji);
+      auto existing = conn->select(ormpp::all)
+                          .from<chat_reaction_t>()
+                          .where(col(&chat_reaction_t::message_id).param() &&
+                                 col(&chat_reaction_t::user_id).param() &&
+                                 col(&chat_reaction_t::emoji).param())
+                          .collect(message_id, user_id, emoji);
       if (!existing.empty()) {
-        conn->delete_records_s<chat_reaction_t>(
-            "id = ?", existing[0].id);
+        conn->remove<chat_reaction_t>()
+            .where(col(&chat_reaction_t::id) == existing[0].id)
+            .execute();
       } else {
         chat_reaction_t r{};
         r.message_id = message_id;
@@ -2530,7 +2637,10 @@ private:
     if (!conn) co_return;
 
     // Verify ownership
-    auto msgs = conn->query_s<chat_message_t>("id = ?", message_id);
+    auto msgs = conn->select(ormpp::all)
+                    .from<chat_message_t>()
+                    .where(col(&chat_message_t::id).param())
+                    .collect(message_id);
     if (msgs.empty() || msgs[0].user_id != user_id) co_return;
     auto channel_id = msgs[0].channel_id;
 
@@ -2558,21 +2668,30 @@ private:
     if (!conn) co_return;
 
     // Verify ownership or admin privilege
-    auto msgs = conn->query_s<chat_message_t>("id = ?", message_id);
+    auto msgs = conn->select(ormpp::all)
+                    .from<chat_message_t>()
+                    .where(col(&chat_message_t::id).param())
+                    .collect(message_id);
     if (msgs.empty()) co_return;
     if (msgs[0].user_id != user_id && !is_chat_admin(user_id)) co_return;
 
     auto channel_id = msgs[0].channel_id;
 
     // Delete reactions first, then message
-    conn->delete_records_s<chat_reaction_t>("message_id = ?", message_id);
-    conn->delete_records_s<chat_message_t>("id = ?", message_id);
+    conn->remove<chat_reaction_t>()
+        .where(col(&chat_reaction_t::message_id) == message_id)
+        .execute();
+    conn->remove<chat_message_t>()
+        .where(col(&chat_message_t::id) == message_id)
+        .execute();
 
     // Decrement channel message_count
-    conn->execute(
-        "UPDATE chat_channels SET message_count = CASE WHEN message_count > 0 "
-        "THEN message_count - 1 ELSE 0 END WHERE id = " +
-        std::to_string(channel_id));
+    conn->update<chat_channel_t>()
+        .set(col(&chat_channel_t::message_count),
+             ormpp::raw_sql(
+                 "CASE WHEN message_count > 0 THEN message_count - 1 ELSE 0 END"))
+        .where(col(&chat_channel_t::id) == channel_id)
+        .execute();
     chat_channel_cache::instance().decrement_message_count(channel_id);
 
     std::ostringstream os;

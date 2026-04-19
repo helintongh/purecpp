@@ -188,10 +188,10 @@ public:
             .from<article_comments_t>()
             .where(col(&article_comments_t::article_id).param())
             .collect(article_id);
-    articles_t update_article;
-    update_article.comments_count = total_comment;
-    std::string condition = "article_id=" + std::to_string(article_id);
-    conn->update_some<&articles_t::comments_count>(update_article, condition);
+    conn->update<articles_t>()
+        .set(col(&articles_t::comments_count), total_comment)
+        .where(col(&articles_t::article_id) == article_id)
+        .execute();
     // 返回新评论信息
     add_comment_response response{
         .comment_id = new_comment.comment_id,
@@ -385,13 +385,14 @@ public:
     }
 
     // 删除评论（标记为已删除）
-    article_comments_t comment;
-    comment.comment_status = CommentStatus::DELETED;
-    comment.updated_at = get_timestamp_milliseconds();
-
-    int n = conn->update_some<&article_comments_t::comment_status,
-                              &article_comments_t::updated_at>(
-        comment, "comment_id=" + std::to_string(request.comment_id));
+    int n = conn->update<article_comments_t>()
+                .set(col(&article_comments_t::comment_status),
+                     CommentStatus::DELETED)
+                .set(col(&article_comments_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&article_comments_t::comment_id) ==
+                       request.comment_id)
+                .execute();
 
     if (n == 0) {
       set_server_internel_error(resp);
@@ -405,10 +406,10 @@ public:
             .where(col(&article_comments_t::article_id).param() &&
                    col(&article_comments_t::comment_status).param())
             .collect(article_id, CommentStatus::PUBLISH);
-    articles_t update_article;
-    update_article.comments_count = total_comment;
-    std::string condition = "article_id=" + std::to_string(article_id);
-    conn->update_some<&articles_t::comments_count>(update_article, condition);
+    conn->update<articles_t>()
+        .set(col(&articles_t::comments_count), total_comment)
+        .where(col(&articles_t::article_id) == article_id)
+        .execute();
 
     std::string json = make_success("评论删除成功");
     resp.set_status_and_content(status_type::ok, std::move(json));

@@ -85,14 +85,12 @@ public:
     // 验证密码
     if (user.pwd_hash != purecpp::password_encrypt(info.password)) {
       // 密码错误，更新失败次数和最后失败时间
-      users_t update_user;
-      update_user.login_attempts = user.login_attempts + 1;
-      update_user.last_failed_login = current_time;
-
       // 保存更新到数据库
-      if (conn->update_some<&users_t::login_attempts,
-                            &users_t::last_failed_login>(
-              update_user, "id=" + std::to_string(user.id)) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::login_attempts), user.login_attempts + 1)
+              .set(col(&users_t::last_failed_login), current_time)
+              .where(col(&users_t::id) == user.id)
+              .execute() != 1) {
         resp.set_status_and_content(status_type::bad_request,
                                     make_error(PURECPP_ERROR_LOGIN_FAILED));
         return;
@@ -122,13 +120,13 @@ public:
         generate_jwt_token(user.id, user_name_str, email_str);
 
     // 登录成功，更新状态
-    users_t update_user;
-    update_user.login_attempts = 0;
-    update_user.status = std::string(STATUS_OF_ONLINE);
-    update_user.last_active_at = get_timestamp_milliseconds();
-    if (conn->update_some<&users_t::login_attempts, &users_t::status,
-                          &users_t::last_active_at>(
-            update_user, "id=" + std::to_string(user.id)) != 1) {
+    if (conn->update<users_t>()
+            .set(col(&users_t::login_attempts), 0)
+            .set(col(&users_t::status), std::string(STATUS_OF_ONLINE))
+            .set(col(&users_t::last_active_at),
+                 get_timestamp_milliseconds())
+            .where(col(&users_t::id) == user.id)
+            .execute() != 1) {
       // 更新失败报错
       resp.set_status_and_content(status_type::bad_request,
                                   make_error(PURECPP_ERROR_LOGIN_FAILED));
@@ -248,10 +246,10 @@ public:
 
     // 更新用户状态为登出
     auto user = users_by_id[0];
-    users_t update_user;
-    update_user.status = std::string(STATUS_OF_OFFLINE);
-    if (conn->update_some<&users_t::status>(
-            update_user, "id=" + std::to_string(user.id)) != 1) {
+    if (conn->update<users_t>()
+            .set(col(&users_t::status), std::string(STATUS_OF_OFFLINE))
+            .where(col(&users_t::id) == user.id)
+            .execute() != 1) {
       resp.set_status_and_content(cinatra::status_type::bad_request,
                                   make_error(PURECPP_ERROR_LOGOUT_FAILED));
       return;

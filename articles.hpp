@@ -247,9 +247,11 @@ public:
     }
 
     // 先更新浏览量
-    conn->execute(
-        "UPDATE `articles` SET views_count = views_count + 1 WHERE slug = '" +
-        std::string(slug) + "'");
+    conn->update<articles_t>()
+        .set(col(&articles_t::views_count),
+             ormpp::raw_sql("views_count + 1"))
+        .where(col(&articles_t::slug) == std::string(slug))
+        .execute();
 
     // 再获取文章详情
     auto list =
@@ -285,26 +287,20 @@ public:
     }
 
     // 文章编辑以后，上次审核结果也删掉
-    articles_t article{};
-    article.tag_ids = info.tag_ids;
-    article.title = info.title;
-    article.abstraction = info.excerpt;
-    article.content = info.content;
-    article.status = PENDING_REVIEW.data();
-    article.reviewer_id = 0;
-    article.review_comment = "";
-    article.review_date = 0;
-    article.updated_at = get_timestamp_milliseconds();
-
-    // 使用安全的字符串拼接，避免SQL注入风险
-    std::string slug = "slug='";
-    slug.append(info.slug).append("'");
-    int n =
-        conn->update_some<&articles_t::tag_ids, &articles_t::title,
-                          &articles_t::abstraction, &articles_t::content,
-                          &articles_t::status, &articles_t::reviewer_id,
-                          &articles_t::review_comment, &articles_t::review_date,
-                          &articles_t::updated_at>(article, slug);
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::tag_ids), info.tag_ids)
+                .set(col(&articles_t::title), info.title)
+                .set(col(&articles_t::abstraction), info.excerpt)
+                .set(col(&articles_t::content), info.content)
+                .set(col(&articles_t::status),
+                     std::string(PENDING_REVIEW.data()))
+                .set(col(&articles_t::reviewer_id), 0)
+                .set(col(&articles_t::review_comment), std::string{})
+                .set(col(&articles_t::review_date), 0)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == info.slug)
+                .execute();
 
     if (n == 0) {
       set_server_internel_error(resp);
@@ -567,20 +563,18 @@ public:
     }
 
     // 更新最近一次审核状态及意见
-    articles_t article{};
-    article.reviewer_id = review_user.id;
-    article.review_date = get_timestamp_milliseconds();
-    article.review_comment = request.review_comment;
-    article.status =
-        request.review_status == REVIEW_ACCEPTED ? PUBLISHED : REJECTED;
-
-    // 使用安全的字符串拼接，避免SQL注入风险
-    std::string slug = "slug='";
-    slug.append(request.slug).append("'");
-    int n =
-        conn->update_some<&articles_t::reviewer_id, &articles_t::review_date,
-                          &articles_t::review_comment, &articles_t::status>(
-            article, slug);
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::reviewer_id), review_user.id)
+                .set(col(&articles_t::review_date),
+                     get_timestamp_milliseconds())
+                .set(col(&articles_t::review_comment),
+                     request.review_comment)
+                .set(col(&articles_t::status),
+                     request.review_status == REVIEW_ACCEPTED
+                         ? std::string(PUBLISHED)
+                         : std::string(REJECTED))
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
     if (n == 0) {
       set_server_internel_error(resp);
       return;
@@ -802,11 +796,12 @@ public:
     }
 
     // 标记文章为已删除
-    articles_t article;
-    article.is_deleted = true;
-    article.updated_at = get_timestamp_milliseconds();
-    int n = conn->update_some<&articles_t::is_deleted, &articles_t::updated_at>(
-        article, "slug='" + request.slug + "'");
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::is_deleted), true)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
     if (n == 0) {
       set_server_internel_error(resp);
       return;
@@ -1099,12 +1094,12 @@ public:
     }
 
     // 更新tag_ids值
-    articles_t article;
-    article.tag_ids = new_tag_ids;
-    article.updated_at = get_timestamp_milliseconds();
-
-    int n = conn->update_some<&articles_t::tag_ids, &articles_t::updated_at>(
-        article, "slug='" + request.slug + "'");
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::tag_ids), new_tag_ids)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
 
     if (n == 0) {
       set_server_internel_error(resp);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include <algorithm>
 
 namespace purecpp {
 // 邮箱验证工具类
@@ -9,7 +10,7 @@ public:
   // 创建邮箱验证token并存储到数据库
   static std::pair<bool, std::string>
   create_verify_token(uint64_t user_id, const std::string &email) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       CINATRA_LOG_ERROR << "获取数据库连接失败";
       return std::make_pair(false, "获取数据库连接失败");
@@ -32,7 +33,7 @@ public:
     };
     // 安全地复制token，确保不溢出并添加null终止符
     std::copy_n(token.begin(),
-                std::min(token.size(), token_record.token.size() - 1),
+                (std::min)(token.size(), token_record.token.size() - 1),
                 token_record.token.data());
     token_record.token[token_record.token.size() - 1] = '\0';
 
@@ -47,7 +48,7 @@ public:
 
   // 验证token有效性
   static bool verify_email_token(const std::string &token) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       CINATRA_LOG_ERROR << "获取数据库连接失败";
       return false;

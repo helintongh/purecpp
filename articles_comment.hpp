@@ -5,6 +5,7 @@
 
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #include <cinatra.hpp>
 
@@ -12,13 +13,23 @@ using namespace cinatra;
 
 namespace purecpp {
 
+struct article_user_comments_request {
+  uint64_t user_id;
+  int current_page;
+  int per_page;
+};
+
+struct article_delete_comment_request {
+  uint64_t comment_id;
+};
+
 class articles_comment {
 public:
   // 获取文章评论
   void get_article_comment(coro_http_request &req, coro_http_response &resp) {
     auto request = std::any_cast<get_comments_request>(req.get_user_data());
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -83,7 +94,7 @@ public:
   void add_article_comment(coro_http_request &req, coro_http_response &resp) {
     auto request = std::any_cast<add_comment_request>(req.get_user_data());
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -132,7 +143,7 @@ public:
                                    .updated_at = now};
     // 复制IP地址到std::array
     std::copy_n(client_ip.data(),
-                std::min(client_ip.size(), new_comment.ip.size()),
+                (std::min)(client_ip.size(), new_comment.ip.size()),
                 new_comment.ip.data());
     // 检查parent_comment_id评论是否存在
     if (request.parent_comment_id > 0) {
@@ -213,13 +224,7 @@ public:
     }
 
     // 解析请求参数
-    struct user_comments_request {
-      uint64_t user_id;
-      int current_page;
-      int per_page;
-    };
-
-    user_comments_request request;
+    article_user_comments_request request{};
     std::error_code ec;
     iguana::from_json(request, body, ec);
     if (ec) {
@@ -251,7 +256,7 @@ public:
       return;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -306,11 +311,7 @@ public:
     }
 
     // 解析请求参数
-    struct delete_comment_request {
-      uint64_t comment_id;
-    };
-
-    delete_comment_request request;
+    article_delete_comment_request request{};
     std::error_code ec;
     iguana::from_json(request, body, ec);
     if (ec) {
@@ -335,7 +336,7 @@ public:
       return;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;

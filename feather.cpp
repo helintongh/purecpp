@@ -17,6 +17,9 @@
 #include "articles.hpp"
 #include "articles_aspects.hpp"
 #include "articles_comment.hpp"
+#include "chatroom.hpp"
+#include "file_watcher.hpp"
+#include "sensitive_word_filter.hpp"
 #include "entity.hpp"
 #include "rate_limiter.hpp"
 #include "tags.hpp"
@@ -81,10 +84,22 @@ bool init_db() {
   db_config conf;
   iguana::from_json(conf, json);
 
-  auto &pool = connection_pool<dbng<mysql>>::instance();
+  auto &pool = get_db_pool();
   try {
+#if defined(PURECPP_DB_SQLITE)
+    std::string db_file = conf.db_name.empty() ? "purecpp.db" : conf.db_name;
+    if (!db_file.ends_with(".db")) {
+      db_file += ".db";
+    }
+    pool.init(conf.db_conn_num, "", "", conf.db_pwd, db_file,
+              conf.db_conn_timeout, 0);
+#elif defined(PURECPP_DB_MYSQL)
     pool.init(conf.db_conn_num, conf.db_ip, conf.db_user_name, conf.db_pwd,
-              conf.db_name.data(), conf.db_conn_timeout, conf.db_port);
+              conf.db_name, conf.db_conn_timeout, conf.db_port);
+#elif defined(PURECPP_DB_POSTGRESQL)
+    pool.init(conf.db_conn_num, conf.db_ip, conf.db_user_name, conf.db_pwd,
+              conf.db_name, conf.db_conn_timeout, conf.db_port);
+#endif
   } catch (const std::exception &e) {
     CINATRA_LOG_ERROR << e.what();
     return false;
@@ -160,6 +175,7 @@ bool init_db() {
     CINATRA_LOG_ERROR << "Table 'user_gifts' create error.";
   }
 
+  CINATRA_LOG_INFO << "Database pool initialized: " << database_backend_name();
   return true;
 }
 
@@ -187,13 +203,36 @@ int main() {
   if (!init_db()) {
     return -1;
   }
+
+  // 初始化聊天室数据库
+  if (!init_chat_db()) {
+    CINATRA_LOG_ERROR << "init chat db failed";
+    return -1;
+  }
+
+  // 加载聊天室敏感词库
+  sensitive_word_filter::instance().load("sensitive_words.txt");
+  if (!sensitive_word_filter::instance().empty()) {
+    CINATRA_LOG_INFO << "sensitive word filter loaded";
+  }
+
   // 从配置文件加载配置
   purecpp_config::get_instance().load_config("cfg/user_config.json");
 
   // 初始化限流器
   rate_limiter::instance().init_from_config();
 
-  auto &db_pool = connection_pool<dbng<mysql>>::instance();
+  // 启动文件热更新监视器（每 5 秒检查一次修改时间）
+  file_watcher watcher;
+  watcher.add("cfg/user_config.json", [] {
+    purecpp_config::get_instance().reload_config();
+    CINATRA_LOG_INFO << "cfg/user_config.json reloaded";
+  });
+  watcher.add("sensitive_words.txt", [] {
+    sensitive_word_filter::instance().load("sensitive_words.txt");
+    CINATRA_LOG_INFO << "sensitive_words.txt reloaded";
+  });
+  watcher.start(std::chrono::seconds(5));
 
   coro_http_server server(std::thread::hardware_concurrency(), 443);
   server.init_ssl("purecpp.pem", "purecpp.key");
@@ -457,5 +496,37 @@ int main() {
   // 获取统计数据路由
   server.set_http_handler<GET>("/api/v1/stats", &articles::get_stats, article,
                                log_request_response{});
+  // 聊天室路由
+  chat_handler_t chat_h{};
+  server.set_http_handler<GET>(
+      "/api/v1/chat/channels", &chat_handler_t::get_channels, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/chat/history", &chat_handler_t::get_history, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/chat/search", &chat_handler_t::search_messages, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/channel", &chat_handler_t::create_channel, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/delete_channel", &chat_handler_t::delete_channel, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/mark_read", &chat_handler_t::mark_read, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/upload", &chat_handler_t::upload_file, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/mute_user", &chat_handler_t::mute_user, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/chat/unmute_user", &chat_handler_t::unmute_user, chat_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/ws/chat", &chat_handler_t::handle_ws, chat_h);
+
   server.sync_start();
 }

@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <string_view>
 
@@ -26,6 +28,14 @@ inline uint64_t get_timestamp_seconds() {
   auto duration = now.time_since_epoch();
   auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
   return static_cast<uint64_t>(seconds.count());
+}
+
+template<std::size_t N>
+std::string array_to_string(const std::array<char, N>& arr) {
+    const char* first = arr.data();
+    const char* last  = std::find(first, first + N, '\0');
+    // 如果未找到 '\0'，则使用整个数组（注意：可能包含未初始化数据）
+    return std::string(first, last);
 }
 
 /**

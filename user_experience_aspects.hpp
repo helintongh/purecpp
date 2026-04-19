@@ -12,6 +12,16 @@ using namespace purecpp;
 
 namespace purecpp {
 
+struct experience_reward_response_data {
+  uint64_t user_id;
+};
+
+struct experience_reward_response {
+  bool success;
+  std::string message;
+  experience_reward_response_data data;
+};
+
 /**
  * @brief 经验值奖励切面类
  * 用于在用户执行特定操作后自动给予经验值奖励
@@ -75,13 +85,7 @@ private:
     }
 
     // 解析响应体获取用户ID
-    struct register_resp {
-      bool success;
-      std::string message;
-      struct data {
-        uint64_t user_id;
-      } data;
-    } register_result;
+    experience_reward_response register_result{};
 
     std::error_code ec;
     iguana::from_json(register_result, resp_body, ec);
@@ -112,13 +116,7 @@ private:
     }
 
     // 解析响应体获取用户ID
-    struct login_resp {
-      bool success;
-      std::string message;
-      struct data {
-        uint64_t user_id;
-      } data;
-    } login_result;
+    experience_reward_response login_result{};
 
     std::error_code ec;
     iguana::from_json(login_result, resp_body, ec);
@@ -129,7 +127,7 @@ private:
     uint64_t user_id = login_result.data.user_id;
 
     // 检查今天是否已经获得过登录奖励
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       return;
     }

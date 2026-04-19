@@ -6,6 +6,7 @@
 #include "user_aspects.hpp"
 #include "user_dto.hpp"
 #include "user_register.hpp"
+#include <algorithm>
 
 using namespace cinatra;
 
@@ -26,7 +27,7 @@ public:
     login_info info = std::any_cast<login_info>(req.get_user_data());
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -112,11 +113,9 @@ public:
     }
 
     // 安全地将std::array转换为std::string
-    std::string user_name_str(
-        user.user_name.data(),
-        std::find(user.user_name.begin(), user.user_name.end(), '\0'));
-    std::string email_str(user.email.data(), std::find(user.email.begin(),
-                                                       user.email.end(), '\0'));
+    
+    std::string user_name_str = array_to_string(user.user_name);
+    std::string email_str = array_to_string(user.email);
 
     // 生成JWT token和refresh token
     token_response token_resp =
@@ -229,7 +228,7 @@ public:
 
     // 修改用户状态为登出
     // 从数据库中查询用户
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;

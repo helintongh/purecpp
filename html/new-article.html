@@ -200,11 +200,16 @@
                 selectedTags: [],
                 userInfo: null,
                 isQA: false,
-                init() {
+                async init() {
                     this.isQA = new URLSearchParams(location.search).get('mode') === 'qa';
                     this.initializeSimpleMDE();
+                    await apiService.restoreSessionIfNeeded();
                     this.userInfo = apiService.getUserInfo();
-                    this.fetchTags();
+                    if (!this.userInfo) {
+                        window.location.href = 'login.html';
+                        return;
+                    }
+                    await this.fetchTags();
                     this.selectedTags = this.isQA ? [QA_TAG_ID] : [];
                 },
 

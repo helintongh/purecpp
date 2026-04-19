@@ -37,46 +37,49 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // 加载页眉
 function loadHeader() {
-    fetch('header.html')
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    fetch('header.html', { signal: controller.signal })
         .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
+            clearTimeout(timer);
+            if (!response.ok) throw new Error('Network response was not ok');
             return response.text();
         })
         .then(html => {
             const headerContainer = document.getElementById('header-container');
             if (headerContainer) {
                 headerContainer.innerHTML = html;
-                // 确保登录状态的用户图标能正确显示
                 if (typeof initUserInfo === 'function') {
                     initUserInfo();
                 }
             }
         })
         .catch(error => {
+            clearTimeout(timer);
             console.error('Error loading header:', error);
         });
 }
 
 // 加载页脚
 function loadFooter() {
-    fetch('footer.html')
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    fetch('footer.html', { signal: controller.signal })
         .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
+            clearTimeout(timer);
+            if (!response.ok) throw new Error('Network response was not ok');
             return response.text();
         })
         .then(html => {
+            clearTimeout(timer);
             const footerContainer = document.getElementById('footer-container');
             if (footerContainer) {
                 footerContainer.innerHTML = html;
-                // 页脚加载完成后重新初始化主题切换功能，确保事件绑定正确
                 initTheme();
             }
         })
         .catch(error => {
+            clearTimeout(timer);
             console.error('Error loading footer:', error);
         });
 }
@@ -183,7 +186,19 @@ function toggleMenu() {
 // 用户信息显示逻辑统一封装
 
 // 检查用户是否登录
-function checkUserLogin() {
+async function checkUserLogin() {
+    if (typeof apiService === 'undefined') {
+        const loginLink = document.getElementById('login-link');
+        const registerLink = document.getElementById('register-link');
+        const userInfoElement = document.getElementById('user-info');
+        if (loginLink) loginLink.style.display = 'block';
+        if (registerLink) registerLink.style.display = 'block';
+        if (userInfoElement) userInfoElement.style.display = 'none';
+        return;
+    }
+
+    await apiService.restoreSessionIfNeeded();
+
     // 使用apiService获取用户信息和token
     const userInfo = apiService.getUserInfo();
     const token = apiService.getAccessToken();
@@ -249,7 +264,9 @@ function initUserMenu() {
 
             // 使用apiService处理登出
             try {
-                await apiService.logout();
+                if (typeof apiService !== 'undefined') {
+                    await apiService.logout();
+                }
             } catch (error) {
                 console.error('Logout request failed:', error);
             } finally {
@@ -287,8 +304,8 @@ function addUserButtonHoverEffect() {
 }
 
 // 初始化所有用户信息相关功能
-function initUserInfo() {
-    checkUserLogin();
+async function initUserInfo() {
+    await checkUserLogin();
     initUserMenu();
     addUserMenuHoverEffects();
     addUserButtonHoverEffect();

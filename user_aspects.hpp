@@ -204,7 +204,7 @@ struct check_user_exists {
   bool before(coro_http_request &req, coro_http_response &res) {
     register_info info = std::any_cast<register_info>(req.get_user_data());
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       res.set_status_and_content(status_type::internal_server_error,
                                  make_error("获取数据库连接失败"));
@@ -665,7 +665,7 @@ struct edit_article_info {
 };
 
 inline bool has_login(std::string_view username, coro_http_response &resp) {
-  auto conn = connection_pool<dbng<mysql>>::instance().get();
+  auto conn = get_db_pool().get();
   if (conn == nullptr) {
     set_server_internel_error(resp);
     return false;

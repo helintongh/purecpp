@@ -82,6 +82,19 @@ struct comments {
   uint64_t updated_at;
 };
 
+struct article_upload_response {
+  std::string url;
+  std::string filename;
+};
+
+struct article_delete_request {
+  std::string slug;
+};
+
+struct article_toggle_featured_request {
+  std::string slug;
+};
+
 inline void generate_random_string(auto &random_str) {
   static const std::string chars = "abcdefghijklmnopqrstuvwxyz"
                                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -191,7 +204,7 @@ public:
       pos += 1;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -227,7 +240,7 @@ public:
     }
 
     auto slug = it->second;
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -265,7 +278,7 @@ public:
   void edit_article(coro_http_request &req, coro_http_response &resp) {
     edit_article_info info =
         std::any_cast<edit_article_info>(req.get_user_data());
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -302,7 +315,7 @@ public:
   }
 
   void get_articles(coro_http_request &req, coro_http_response &resp) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -418,7 +431,7 @@ public:
   }
 
   void get_pending_articles(coro_http_request &req, coro_http_response &resp) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -505,7 +518,7 @@ public:
                                   make_error("无效的请求参数，JSON格式错误"));
       return;
     }
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -622,12 +635,7 @@ public:
     // 生成文件URL
     std::string file_url = "/uploads/articles/" + unique_filename;
     // 构建响应
-    struct upload_response {
-      std::string url;
-      std::string filename;
-    };
-
-    upload_response data{file_url, unique_filename};
+    article_upload_response data{file_url, unique_filename};
     std::string json = make_data(data, "文件上传成功");
     resp.set_status_and_content(status_type::ok, std::move(json));
   }
@@ -683,7 +691,7 @@ public:
       return;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -739,11 +747,7 @@ public:
     }
 
     // 解析请求参数
-    struct delete_article_request {
-      std::string slug;
-    };
-
-    delete_article_request request;
+    article_delete_request request{};
     std::error_code ec;
     iguana::from_json(request, body, ec);
     if (ec) {
@@ -769,7 +773,7 @@ public:
       return;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -814,7 +818,7 @@ public:
 
   // 获取社区服务文章
   void get_community_service(coro_http_request &req, coro_http_response &resp) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -915,7 +919,7 @@ public:
   // 获取purecpp大会文章
   void get_purecpp_conference(coro_http_request &req,
                               coro_http_response &resp) {
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -1023,11 +1027,7 @@ public:
       return;
     }
 
-    struct toggle_featured_request {
-      std::string slug;
-    };
-
-    toggle_featured_request request{};
+    article_toggle_featured_request request{};
     std::error_code ec;
     iguana::from_json(request, body, ec);
     if (ec) {
@@ -1045,7 +1045,7 @@ public:
       return;
     }
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -1121,7 +1121,7 @@ public:
   // 获取统计数据
   void get_stats(coro_http_request &req, coro_http_response &resp) {
     auto &config = purecpp_config::get_instance();
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;

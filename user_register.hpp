@@ -8,6 +8,7 @@
 #include <cinatra/smtp_client.hpp>
 #include <openssl/sha.h>
 #include <regex>
+#include <algorithm>
 
 using namespace cinatra;
 
@@ -54,17 +55,17 @@ public:
     user_tmp.pwd_hash = pwd_sha;
     // 安全地复制用户名，确保不超过缓冲区大小
     std::copy_n(info.username.begin(),
-                std::min(info.username.size(), user_tmp.user_name.size() - 1),
+                (std::min)(info.username.size(), user_tmp.user_name.size() - 1),
                 user_tmp.user_name.begin());
     user_tmp.user_name[user_tmp.user_name.size() - 1] = '\0';
 
     // 安全地复制邮箱，确保不超过缓冲区大小
     std::copy_n(info.email.begin(),
-                std::min(info.email.size(), user_tmp.email.size() - 1),
+                (std::min)(info.email.size(), user_tmp.email.size() - 1),
                 user_tmp.email.begin());
     user_tmp.email[user_tmp.email.size() - 1] = '\0';
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       co_return;
@@ -124,7 +125,7 @@ public:
     verify_email_info info =
         std::any_cast<verify_email_info>(req.get_user_data());
 
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -220,7 +221,7 @@ public:
         std::any_cast<resend_verify_email_info>(req.get_user_data());
 
     // 查询数据库中是否已存在该邮箱的用户，先查临时表再查正式表
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       co_return;

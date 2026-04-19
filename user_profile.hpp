@@ -9,6 +9,16 @@ using namespace cinatra;
 
 namespace purecpp {
 
+struct profile_lookup_request {
+  uint64_t user_id = 0;
+  std::string username;
+};
+
+struct avatar_upload_response {
+  std::string url;
+  std::string filename;
+};
+
 // 用户个人信息服务类
 class user_profile_t {
 public:
@@ -20,12 +30,7 @@ public:
     auto body = req.get_body();
 
     // 定义可以接收user_id或username的请求结构体
-    struct profile_request {
-      uint64_t user_id = 0;
-      std::string username;
-    };
-
-    profile_request request;
+    profile_lookup_request request{};
     std::error_code ec;
     iguana::from_json(request, body, ec);
     if (ec) {
@@ -42,7 +47,7 @@ public:
     }
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -75,12 +80,8 @@ public:
     // 构建响应
     get_profile_response profile;
     // 使用安全的字符串转换，避免未终止字符串问题
-    profile.username = std::string(
-        user.user_name.data(),
-        std::find(user.user_name.begin(), user.user_name.end(), '\0'));
-    profile.email =
-        std::string(user.email.data(),
-                    std::find(user.email.begin(), user.email.end(), '\0'));
+    profile.username = array_to_string(user.user_name);
+    profile.email = array_to_string(user.email);
     profile.location = user.location;
     profile.bio = user.bio;
     profile.avatar = user.avatar;
@@ -120,7 +121,7 @@ public:
     }
 
     // 查询数据库
-    auto conn = connection_pool<dbng<mysql>>::instance().get();
+    auto conn = get_db_pool().get();
     if (conn == nullptr) {
       set_server_internel_error(resp);
       return;
@@ -267,7 +268,7 @@ public:
       std::string file_url = "/uploads/avatars/" + unique_filename;
 
       // 更新用户的avatar字段
-      auto conn = connection_pool<dbng<mysql>>::instance().get();
+      auto conn = get_db_pool().get();
       if (conn == nullptr) {
         set_server_internel_error(resp);
         return;
@@ -297,12 +298,7 @@ public:
       }
 
       // 构建响应
-      struct upload_response {
-        std::string url;
-        std::string filename;
-      };
-
-      upload_response data;
+      avatar_upload_response data;
       data.url = file_url;
       data.filename = unique_filename;
 

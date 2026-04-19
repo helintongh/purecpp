@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iguana/json_reader.hpp>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -98,27 +99,53 @@ public:
   }
 
   /**
-   * @brief 从JSON文件加载配置
+   * @brief 从JSON文件加载配置（启动时调用，记录路径供后续热更新使用）
    * @param filename JSON文件名
    */
   void load_config(const std::string &filename) {
-    // 从JSON文件加载配置
-    std::ifstream file(filename, std::ios::in);
-    if (!file.is_open()) {
-      CINATRA_LOG_ERROR << "no config file";
-      return;
-    }
+    std::unique_lock lk(mtx_);
+    config_path_ = filename;
+    load_locked(filename);
+  }
 
-    std::string json;
-    json.resize(4096);
-    file.read(json.data(), json.size());
-    iguana::from_json(user_cfg_, json);
+  /**
+   * @brief 热更新：重新从原路径加载配置文件
+   * @return true 加载成功；false 文件无法打开
+   */
+  bool reload_config() {
+    std::unique_lock lk(mtx_);
+    if (config_path_.empty()) return false;
+    return load_locked(config_path_);
+  }
+
+  /**
+   * @brief 获取当前配置的只读快照（加读锁，适合并发请求中使用）
+   */
+  user_config get_config() const {
+    std::shared_lock lk(mtx_);
+    return user_cfg_;
   }
 
 private:
   // ======== 私有构造/析构：保证单例 ========
   purecpp_config() = default;
   ~purecpp_config() = default;
+
+  bool load_locked(const std::string &filename) {
+    std::ifstream file(filename, std::ios::in);
+    if (!file.is_open()) {
+      CINATRA_LOG_ERROR << "no config file: " << filename;
+      return false;
+    }
+    std::string json;
+    json.resize(4096);
+    file.read(json.data(), json.size());
+    iguana::from_json(user_cfg_, json);
+    return true;
+  }
+
+  mutable std::shared_mutex mtx_;
+  std::string config_path_;
 
 public:
   user_config user_cfg_;

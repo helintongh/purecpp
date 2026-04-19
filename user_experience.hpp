@@ -688,7 +688,7 @@ public:
             .collect(user_id);
 
     // 查询分页数据
-    int offset = (page - 1) * page_size;
+    int64_t offset = static_cast<int64_t>(page - 1) * page_size;
     auto transactions =
         conn->select(ormpp::all)
             .from<user_experience_detail_t>()

@@ -77,8 +77,8 @@ struct users_t {
   uint64_t id;
   std::array<char, 254> user_name; // unique, not null
   std::array<char, 254> email;     // unique, not null
-  std::string_view pwd_hash;       // not null
-  std::string status;              // 在线状态Online, Offline, Away
+  std::string pwd_hash;       // not null
+  std::string status;         // 在线状态 Online, Offline, Away
   EmailVerifyStatus is_verifyed; // 邮箱是否已验证(0:未验证, 1:已验证)
   uint64_t created_at;
   uint64_t last_active_at; // 最后活跃时间
@@ -109,7 +109,7 @@ struct users_tmp_t {
   uint64_t id;
   std::array<char, 254> user_name; // unique, not null
   std::array<char, 254> email;     // unique, not null
-  std::string_view pwd_hash;       // not null
+  std::string pwd_hash;       // not null
   EmailVerifyStatus is_verifyed; // 邮箱是否已验证(0:未验证, 1:已验证)
   uint64_t created_at;
 };

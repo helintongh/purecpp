@@ -70,9 +70,8 @@ inline std::string make_success(std::string msg = "") {
  * @return JSON格式的响应字符串
  */
 inline std::string make_error(std::string_view err_msg, int code = 400) {
-  rest_response<std::string_view> data{false, std::string(err_msg)};
+  rest_response<std::string> data{false, std::string(err_msg)};
   data.code = code;
-  // 设置当前时间戳
   auto now = get_timestamp_milliseconds();
   data.timestamp = std::to_string(now);
   std::string json;

@@ -323,7 +323,7 @@ public:
     }
     if (page < 1) page = 1;
     if (page_size < 1 || page_size > 100) page_size = 20;
-    int offset = (page - 1) * page_size;
+    int64_t offset = static_cast<int64_t>(page - 1) * page_size;
 
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }

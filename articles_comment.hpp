@@ -141,10 +141,12 @@ public:
                                    .comment_status = CommentStatus::PUBLISH,
                                    .created_at = now,
                                    .updated_at = now};
-    // 复制IP地址到std::array
-    std::copy_n(client_ip.data(),
-                (std::min)(client_ip.size(), new_comment.ip.size()),
-                new_comment.ip.data());
+    // 复制IP地址到std::array，确保null-terminate
+    {
+      size_t copy_len = (std::min)(client_ip.size(), new_comment.ip.size() - 1);
+      std::copy_n(client_ip.data(), copy_len, new_comment.ip.data());
+      new_comment.ip[copy_len] = '\0';
+    }
     // 检查parent_comment_id评论是否存在
     if (request.parent_comment_id > 0) {
       auto comments =
@@ -265,7 +267,7 @@ public:
     // 设置默认分页参数
     int current_page = request.current_page > 0 ? request.current_page : 1;
     int per_page = request.per_page > 0 ? request.per_page : 10;
-    int offset = (current_page - 1) * per_page;
+    int64_t offset = static_cast<int64_t>(current_page - 1) * per_page;
     int limit = per_page;
 
     // 计算总评论数

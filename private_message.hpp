@@ -89,8 +89,9 @@ inline bool parse_u64(std::string_view raw, uint64_t &value) {
   }
 }
 
-inline std::string get_user_name_by_id(auto &conn, uint64_t user_id) {
-  auto users = conn->query_s<users_t>("id = ?", user_id);
+template <typename Conn>
+inline std::string get_user_name_by_id(Conn &conn, uint64_t user_id) {
+  auto users = conn->template query_s<users_t>("id = ?", user_id);
   return users.empty() ? "" : array_to_string(users[0].user_name);
 }
 

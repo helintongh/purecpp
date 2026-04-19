@@ -116,6 +116,11 @@ public:
       resp.set_status_and_content(status_type::bad_request, make_error("接收者不存在"));
       return;
     }
+    // 接收者也需要有私信权限，否则无法读取消息
+    if (!user_has_pm_privilege(body.receiver_id)) {
+      resp.set_status_and_content(status_type::bad_request, make_error("对方未开通私信功能"));
+      return;
+    }
     // 检查是否被对方拉黑
     if (is_blocked_by(body.receiver_id, sender_id)) {
       resp.set_status_and_content(status_type::forbidden, make_error("对方已拒收你的私信"));
@@ -203,11 +208,22 @@ public:
       resp.set_status_and_content(status_type::bad_request, make_error("缺少 peer_id 参数"));
       return;
     }
-    uint64_t peer_id = std::stoull(std::string(peer_id_str));
-    auto page_str = req.get_query_value("page");
-    auto page_size_str = req.get_query_value("page_size");
-    int page = page_str.empty() ? 1 : std::stoi(std::string(page_str));
-    int page_size = page_size_str.empty() ? 20 : std::stoi(std::string(page_size_str));
+    uint64_t peer_id = 0;
+    int page = 1, page_size = 20;
+    try {
+      peer_id = std::stoull(std::string(peer_id_str));
+      auto page_str = req.get_query_value("page");
+      auto page_size_str = req.get_query_value("page_size");
+      if (!page_str.empty()) page = std::stoi(std::string(page_str));
+      if (!page_size_str.empty()) page_size = std::stoi(std::string(page_size_str));
+    } catch (...) {
+      resp.set_status_and_content(status_type::bad_request, make_error("参数格式错误"));
+      return;
+    }
+    if (peer_id == 0) {
+      resp.set_status_and_content(status_type::bad_request, make_error("peer_id 无效"));
+      return;
+    }
     if (page < 1) page = 1;
     if (page_size < 1 || page_size > 100) page_size = 20;
     int offset = (page - 1) * page_size;
@@ -248,7 +264,11 @@ public:
       resp.set_status_and_content(status_type::bad_request, make_error("缺少消息ID"));
       return;
     }
-    uint64_t msg_id = std::stoull(std::string(id_str));
+    uint64_t msg_id = 0;
+    try { msg_id = std::stoull(std::string(id_str)); } catch (...) {
+      resp.set_status_and_content(status_type::bad_request, make_error("消息ID格式错误"));
+      return;
+    }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
     auto rows = conn->query_s<private_message_t>("id = ?", msg_id);
@@ -296,6 +316,10 @@ public:
     uint64_t user_id = get_user_id_from_token(req);
     if (user_id == 0) {
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
+      return;
+    }
+    if (!user_has_pm_privilege(user_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("需要私信特权", 403));
       return;
     }
     auto conn = get_db_pool().get();
@@ -351,7 +375,11 @@ public:
       resp.set_status_and_content(status_type::bad_request, make_error("缺少 target_id"));
       return;
     }
-    uint64_t target_id = std::stoull(std::string(target_str));
+    uint64_t target_id = 0;
+    try { target_id = std::stoull(std::string(target_str)); } catch (...) {
+      resp.set_status_and_content(status_type::bad_request, make_error("target_id格式错误"));
+      return;
+    }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
     auto rows = conn->query_s<pm_blocklist_t>(

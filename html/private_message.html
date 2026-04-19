@@ -435,6 +435,8 @@
 
 <div include-html="footer.html"></div>
 
+<script src="script/api_service.js"></script>
+<script src="script/layout.js"></script>
 <script src="script/common.js"></script>
 <script>
 function pmApp() {
@@ -460,12 +462,11 @@ function pmApp() {
         blocklist: [],
 
         async init() {
-            const token = localStorage.getItem('token');
-            if (!token) { window.location.href = 'login.html'; return; }
-            const info = parseJwt(token);
-            if (!info) { window.location.href = 'login.html'; return; }
-            this.myUserId = info.user_id || info.id || 0;
-            this.myName = info.username || info.user_name || '';
+            await apiService.restoreSessionIfNeeded();
+            const userInfo = apiService.getUserInfo();
+            if (!userInfo) { apiService.redirectToLogin(); return; }
+            this.myUserId = userInfo.id || userInfo.user_id || 0;
+            this.myName = userInfo.username || userInfo.user_name || '';
 
             // 检查未读数（有权限才会返回正常数据）
             try {
@@ -658,19 +659,8 @@ function pmApp() {
     };
 }
 
-function parseJwt(token) {
-    try {
-        return JSON.parse(atob(token.split('.')[1]));
-    } catch(e) { return null; }
-}
-
 async function apiFetch(url, opts = {}) {
-    const token = localStorage.getItem('token');
-    const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, ...(opts.headers || {}) },
-        ...opts
-    });
-    return res.json();
+    return apiService.request(url, opts);
 }
 </script>
 </body>

@@ -268,6 +268,34 @@ constexpr std::string_view get_alias_struct_name(user_experience_detail_t *) {
   return "user_experience_detail";
 }
 
+// 私信表
+struct private_message_t {
+  uint64_t id = 0;
+  uint64_t sender_id;
+  uint64_t receiver_id;
+  std::string content;
+  uint32_t is_read = 0;                  // 0=未读, 1=已读
+  uint32_t deleted_by_sender = 0;        // 发送者软删除
+  uint32_t deleted_by_receiver = 0;      // 接收者软删除
+  uint64_t created_at;
+};
+
+// 私信黑名单表
+struct pm_blocklist_t {
+  uint64_t id = 0;
+  uint64_t user_id;                      // 拉黑操作者
+  uint64_t blocked_user_id;             // 被拉黑的用户
+  uint64_t created_at;
+};
+REGISTER_AUTO_KEY(pm_blocklist_t, id);
+constexpr std::string_view get_alias_struct_name(pm_blocklist_t *) {
+  return "pm_blocklist";
+}
+REGISTER_AUTO_KEY(private_message_t, id);
+constexpr std::string_view get_alias_struct_name(private_message_t *) {
+  return "private_messages";
+}
+
 enum class TagGroupType : int32_t {
   TECH_ARTICLES = 1, // 技术文章标签组
   CPP_PARTY = 2,     // 社区大会标签组

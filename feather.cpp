@@ -18,6 +18,7 @@
 #include "articles_aspects.hpp"
 #include "articles_comment.hpp"
 #include "chatroom.hpp"
+#include "private_message.hpp"
 #include "file_watcher.hpp"
 #include "sensitive_word_filter.hpp"
 #include "entity.hpp"
@@ -207,6 +208,12 @@ int main() {
   // 初始化聊天室数据库
   if (!init_chat_db()) {
     CINATRA_LOG_ERROR << "init chat db failed";
+    return -1;
+  }
+
+  // 初始化私信数据库
+  if (!init_pm_db()) {
+    CINATRA_LOG_ERROR << "init private message db failed";
     return -1;
   }
 
@@ -527,6 +534,36 @@ int main() {
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<GET>(
       "/ws/chat", &chat_handler_t::handle_ws, chat_h);
+
+  // 私信路由
+  private_message_handler_t pm_h{};
+  server.set_http_handler<POST>(
+      "/api/v1/pm/send", &private_message_handler_t::send_message, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/inbox", &private_message_handler_t::get_inbox, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/history", &private_message_handler_t::get_history, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<DELETE_>(
+      "/api/v1/pm/{id}", &private_message_handler_t::delete_message, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/pm/mark_read", &private_message_handler_t::mark_read, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/unread_count", &private_message_handler_t::get_unread_count, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/pm/block", &private_message_handler_t::block_user, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<DELETE_>(
+      "/api/v1/pm/block/{target_id}", &private_message_handler_t::unblock_user, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/blocklist", &private_message_handler_t::get_blocklist, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
 
   server.sync_start();
 }

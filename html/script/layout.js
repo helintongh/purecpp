@@ -230,6 +230,22 @@ async function checkUserLogin() {
         if (userAvatarElement) {
             userAvatarElement.src = userInfo.avatar;
         }
+
+        // 拉取私信未读数
+        try {
+            const token = apiService.getAccessToken();
+            const pmRes = await fetch('/api/v1/pm/unread_count', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const pmData = await pmRes.json();
+            if (pmData.code === 200 && pmData.data > 0) {
+                const badge = document.getElementById('pm-unread-badge');
+                if (badge) {
+                    badge.textContent = pmData.data > 99 ? '99+' : pmData.data;
+                    badge.style.display = 'inline';
+                }
+            }
+        } catch(e) {}
     } else {
         // 用户未登录，显示登录/注册链接，隐藏用户信息图标
         if (loginLink) loginLink.style.display = 'block';

@@ -544,9 +544,12 @@ int main() {
       "/api/v1/pm/inbox", &private_message_handler_t::get_inbox, pm_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<GET>(
+      "/api/v1/pm/sent", &private_message_handler_t::get_sentbox, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
       "/api/v1/pm/history", &private_message_handler_t::get_history, pm_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
-  server.set_http_handler<DELETE_>(
+  server.set_http_handler<DEL>(
       "/api/v1/pm/:id", &private_message_handler_t::delete_message, pm_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<POST>(
@@ -558,9 +561,9 @@ int main() {
   server.set_http_handler<POST>(
       "/api/v1/pm/block", &private_message_handler_t::block_user, pm_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
-  server.set_http_handler<DELETE_>(
+  server.set_http_handler<DEL>(
       "/api/v1/pm/block/:target_id", &private_message_handler_t::unblock_user, pm_h,
-      log_request_response{}, check_token, rate_limiter_aspect{});
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<GET>(
       "/api/v1/pm/blocklist", &private_message_handler_t::get_blocklist, pm_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});

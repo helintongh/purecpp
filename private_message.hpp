@@ -13,22 +13,25 @@ namespace purecpp {
 // ==================== DTOs ====================
 
 struct pm_send_req {
-  uint64_t receiver_id = 0;
+  std::string receiver_id;
+  std::string receiver_name;
   std::string content;
 };
 
 struct pm_message_view {
-  uint64_t id = 0;
-  uint64_t sender_id = 0;
-  uint64_t receiver_id = 0;
+  std::string id;
+  std::string sender_id;
+  std::string receiver_id;
+  std::string sender_name;
+  bool is_own = false;
   std::string content;
   uint32_t is_read = 0;
   uint64_t created_at = 0;
 };
-YLT_REFL(pm_message_view, id, sender_id, receiver_id, content, is_read, created_at);
+YLT_REFL(pm_message_view, id, sender_id, receiver_id, sender_name, is_own, content, is_read, created_at);
 
 struct pm_conversation_view {
-  uint64_t peer_id = 0;
+  std::string peer_id;
   std::string peer_name;
   std::string last_message;
   uint64_t last_at = 0;
@@ -36,30 +39,59 @@ struct pm_conversation_view {
 };
 YLT_REFL(pm_conversation_view, peer_id, peer_name, last_message, last_at, unread);
 
+struct pm_mailbox_item_view {
+  std::string id;
+  std::string peer_id;
+  std::string peer_name;
+  std::string sender_id;
+  std::string sender_name;
+  std::string receiver_id;
+  std::string receiver_name;
+  std::string content;
+  bool is_own = false;
+  uint32_t is_read = 0;
+  uint64_t created_at = 0;
+};
+YLT_REFL(pm_mailbox_item_view, id, peer_id, peer_name, sender_id, sender_name,
+         receiver_id, receiver_name, content, is_own, is_read, created_at);
+
 struct pm_mark_read_req {
-  uint64_t sender_id = 0;
+  std::string sender_id;
 };
 
 struct pm_block_req {
-  uint64_t target_user_id = 0;
+  std::string target_user_id;
 };
+
+struct blocked_user_view {
+  std::string user_id;
+  std::string user_name;
+  uint64_t created_at = 0;
+};
+YLT_REFL(blocked_user_view, user_id, user_name, created_at);
 
 // ==================== Helpers ====================
 
-inline bool user_has_pm_privilege(uint64_t user_id) {
+inline bool can_use_private_message(uint64_t user_id) {
   auto conn = get_db_pool().get();
   if (!conn) return false;
-  uint64_t now = get_timestamp_milliseconds();
-  auto privs = conn->query_s<user_privileges_t>(
-      "user_id = ? AND is_active = 1 AND end_time > ?", user_id, now);
-  if (privs.empty()) return false;
-  for (auto &p : privs) {
-    auto ps = conn->query_s<privileges_t>(
-        "id = ? AND privilege_type = ? AND is_active = 1",
-        p.privilege_id, static_cast<int32_t>(PrivilegeType::PRIVATE_MESSAGE));
-    if (!ps.empty()) return true;
+  auto users = conn->query_s<users_t>("id = ?", user_id);
+  return !users.empty();
+}
+
+inline bool parse_u64(std::string_view raw, uint64_t &value) {
+  if (raw.empty()) return false;
+  try {
+    value = std::stoull(std::string(raw));
+    return value != 0;
+  } catch (...) {
+    return false;
   }
-  return false;
+}
+
+inline std::string get_user_name_by_id(auto &conn, uint64_t user_id) {
+  auto users = conn->query_s<users_t>("id = ?", user_id);
+  return users.empty() ? "" : array_to_string(users[0].user_name);
 }
 
 // 检查 user_id 是否被 target_user_id 拉黑
@@ -83,19 +115,16 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    if (!user_has_pm_privilege(sender_id)) {
-      resp.set_status_and_content(status_type::forbidden, make_error("需要私信特权", 403));
+    if (!can_use_private_message(sender_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("当前账号不可使用私信功能", 403));
       return;
     }
     pm_send_req body{};
-    std::string err;
-    iguana::from_json(body, req.get_body(), err);
-    if (!err.empty() || body.receiver_id == 0 || body.content.empty()) {
+    std::error_code ec;
+    iguana::from_json(body, req.get_body(), ec);
+    if (ec || body.content.empty() ||
+        (body.receiver_id.empty() && body.receiver_name.empty())) {
       resp.set_status_and_content(status_type::bad_request, make_error("参数错误"));
-      return;
-    }
-    if (body.receiver_id == sender_id) {
-      resp.set_status_and_content(status_type::bad_request, make_error("不能给自己发私信"));
       return;
     }
     size_t cp_count = 0;
@@ -111,24 +140,40 @@ public:
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
-    auto receivers = conn->query_s<users_t>("id = ?", body.receiver_id);
+    uint64_t receiver_id = 0;
+    std::vector<users_t> receivers;
+    if (!body.receiver_name.empty()) {
+      receivers = conn->query_s<users_t>("user_name = ?", body.receiver_name);
+      if (!receivers.empty()) {
+        receiver_id = receivers[0].id;
+      }
+    } else {
+      if (!parse_u64(body.receiver_id, receiver_id)) {
+        resp.set_status_and_content(status_type::bad_request, make_error("接收者参数错误"));
+        return;
+      }
+      receivers = conn->query_s<users_t>("id = ?", receiver_id);
+    }
     if (receivers.empty()) {
       resp.set_status_and_content(status_type::bad_request, make_error("接收者不存在"));
       return;
     }
-    // 接收者也需要有私信权限，否则无法读取消息
-    if (!user_has_pm_privilege(body.receiver_id)) {
-      resp.set_status_and_content(status_type::bad_request, make_error("对方未开通私信功能"));
+    if (receiver_id == sender_id) {
+      resp.set_status_and_content(status_type::bad_request, make_error("不能给自己发私信"));
+      return;
+    }
+    if (!can_use_private_message(receiver_id)) {
+      resp.set_status_and_content(status_type::bad_request, make_error("接收者不存在或不可用"));
       return;
     }
     // 检查是否被对方拉黑
-    if (is_blocked_by(body.receiver_id, sender_id)) {
+    if (is_blocked_by(receiver_id, sender_id)) {
       resp.set_status_and_content(status_type::forbidden, make_error("对方已拒收你的私信"));
       return;
     }
     private_message_t msg{};
     msg.sender_id = sender_id;
-    msg.receiver_id = body.receiver_id;
+    msg.receiver_id = receiver_id;
     msg.content = body.content;
     msg.is_read = 0;
     msg.deleted_by_sender = 0;
@@ -146,49 +191,79 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    if (!user_has_pm_privilege(user_id)) {
-      resp.set_status_and_content(status_type::forbidden, make_error("需要私信特权", 403));
+    if (!can_use_private_message(user_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("当前账号不可使用私信功能", 403));
       return;
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
 
-    // 只取对当前用户可见的消息（软删除过滤）
     auto msgs = conn->query_s<private_message_t>(
-        "(sender_id = ? AND deleted_by_sender = 0) OR "
-        "(receiver_id = ? AND deleted_by_receiver = 0) "
+        "receiver_id = ? AND deleted_by_receiver = 0 "
         "ORDER BY created_at DESC",
-        user_id, user_id);
+        user_id);
 
-    std::unordered_map<uint64_t, private_message_t *> latest;
+    std::vector<pm_mailbox_item_view> convs;
+    convs.reserve(msgs.size());
     for (auto &m : msgs) {
-      uint64_t peer = (m.sender_id == user_id) ? m.receiver_id : m.sender_id;
-      if (latest.find(peer) == latest.end()) latest[peer] = &m;
+      pm_mailbox_item_view item{};
+      item.id = std::to_string(m.id);
+      item.peer_id = std::to_string(m.sender_id);
+      item.peer_name = get_user_name_by_id(conn, m.sender_id);
+      item.sender_id = std::to_string(m.sender_id);
+      item.sender_name = item.peer_name;
+      item.receiver_id = std::to_string(m.receiver_id);
+      item.receiver_name = get_user_name_by_id(conn, m.receiver_id);
+      item.content = m.content;
+      item.is_own = false;
+      item.is_read = m.is_read;
+      item.created_at = m.created_at;
+      convs.push_back(std::move(item));
     }
-    std::unordered_map<uint64_t, uint64_t> unread_count;
-    for (auto &m : msgs) {
-      if (m.receiver_id == user_id && m.is_read == 0 && m.deleted_by_receiver == 0)
-        unread_count[m.sender_id]++;
-    }
-    std::unordered_map<uint64_t, std::string> peer_names;
-    for (auto &[pid, _] : latest) {
-      auto users = conn->query_s<users_t>("id = ?", pid);
-      if (!users.empty()) peer_names[pid] = array_to_string(users[0].user_name);
-    }
-    std::vector<pm_conversation_view> convs;
-    for (auto &[pid, mp] : latest) {
-      pm_conversation_view cv{};
-      cv.peer_id = pid;
-      cv.peer_name = peer_names.count(pid) ? peer_names[pid] : "";
-      cv.last_message = mp->content.size() > 50 ? mp->content.substr(0, 50) + "..." : mp->content;
-      cv.last_at = mp->created_at;
-      cv.unread = unread_count.count(pid) ? unread_count[pid] : 0;
-      convs.push_back(std::move(cv));
-    }
-    std::sort(convs.begin(), convs.end(),
-              [](const auto &a, const auto &b) { return a.last_at > b.last_at; });
     resp.set_status_and_content(status_type::ok,
         make_data(convs, "获取收件箱成功", static_cast<int>(convs.size())));
+  }
+
+  // GET /api/v1/pm/sent
+  void get_sentbox(coro_http_request &req, coro_http_response &resp) {
+    resp.set_content_type<resp_content_type::json>();
+    uint64_t user_id = get_user_id_from_token(req);
+    if (user_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
+      return;
+    }
+    if (!can_use_private_message(user_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("当前账号不可使用私信功能", 403));
+      return;
+    }
+    auto conn = get_db_pool().get();
+    if (!conn) { set_server_internel_error(resp); return; }
+
+    auto msgs = conn->query_s<private_message_t>(
+        "sender_id = ? AND deleted_by_sender = 0 "
+        "ORDER BY created_at DESC",
+        user_id);
+
+    std::vector<pm_mailbox_item_view> items;
+    items.reserve(msgs.size());
+    const std::string my_name = get_user_name_by_id(conn, user_id);
+    for (auto &m : msgs) {
+      pm_mailbox_item_view item{};
+      item.id = std::to_string(m.id);
+      item.peer_id = std::to_string(m.receiver_id);
+      item.peer_name = get_user_name_by_id(conn, m.receiver_id);
+      item.sender_id = std::to_string(m.sender_id);
+      item.sender_name = my_name;
+      item.receiver_id = std::to_string(m.receiver_id);
+      item.receiver_name = item.peer_name;
+      item.content = m.content;
+      item.is_own = true;
+      item.is_read = m.is_read;
+      item.created_at = m.created_at;
+      items.push_back(std::move(item));
+    }
+    resp.set_status_and_content(status_type::ok,
+        make_data(items, "获取发件箱成功", static_cast<int>(items.size())));
   }
 
   // GET /api/v1/pm/history?peer_id=123&page=1&page_size=20
@@ -199,8 +274,8 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    if (!user_has_pm_privilege(user_id)) {
-      resp.set_status_and_content(status_type::forbidden, make_error("需要私信特权", 403));
+    if (!can_use_private_message(user_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("当前账号不可使用私信功能", 403));
       return;
     }
     auto peer_id_str = req.get_query_value("peer_id");
@@ -244,10 +319,19 @@ public:
         user_id, peer_id, peer_id, user_id);
     int total = static_cast<int>(all.size());
 
+    std::unordered_map<uint64_t, std::string> user_names;
     std::vector<pm_message_view> views;
     views.reserve(msgs.size());
-    for (auto &m : msgs)
-      views.push_back({m.id, m.sender_id, m.receiver_id, m.content, m.is_read, m.created_at});
+    for (auto &m : msgs) {
+      if (!user_names.count(m.sender_id)) {
+        auto users = conn->query_s<users_t>("id = ?", m.sender_id);
+        user_names[m.sender_id] = users.empty() ? "" : array_to_string(users[0].user_name);
+      }
+      views.push_back({std::to_string(m.id), std::to_string(m.sender_id),
+                       std::to_string(m.receiver_id), user_names[m.sender_id],
+                       m.sender_id == user_id, m.content, m.is_read,
+                       m.created_at});
+    }
     resp.set_status_and_content(status_type::ok, make_data(views, "获取聊天记录成功", total));
   }
 
@@ -259,7 +343,7 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    auto id_str = req.get_path_param("id");
+    auto id_str = req.params_["id"];
     if (id_str.empty()) {
       resp.set_status_and_content(status_type::bad_request, make_error("缺少消息ID"));
       return;
@@ -296,16 +380,17 @@ public:
       return;
     }
     pm_mark_read_req body{};
-    std::string err;
-    iguana::from_json(body, req.get_body(), err);
-    if (!err.empty() || body.sender_id == 0) {
+    std::error_code ec;
+    iguana::from_json(body, req.get_body(), ec);
+    uint64_t sender_id = 0;
+    if (ec || !parse_u64(body.sender_id, sender_id)) {
       resp.set_status_and_content(status_type::bad_request, make_error("参数错误"));
       return;
     }
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
     auto unread = conn->query_s<private_message_t>(
-        "sender_id = ? AND receiver_id = ? AND is_read = 0", body.sender_id, user_id);
+        "sender_id = ? AND receiver_id = ? AND is_read = 0", sender_id, user_id);
     for (auto &m : unread) { m.is_read = 1; conn->update(m); }
     resp.set_status_and_content(status_type::ok, make_success("已标记为已读"));
   }
@@ -318,8 +403,8 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    if (!user_has_pm_privilege(user_id)) {
-      resp.set_status_and_content(status_type::forbidden, make_error("需要私信特权", 403));
+    if (!can_use_private_message(user_id)) {
+      resp.set_status_and_content(status_type::forbidden, make_error("当前账号不可使用私信功能", 403));
       return;
     }
     auto conn = get_db_pool().get();
@@ -339,9 +424,11 @@ public:
       return;
     }
     pm_block_req body{};
-    std::string err;
-    iguana::from_json(body, req.get_body(), err);
-    if (!err.empty() || body.target_user_id == 0 || body.target_user_id == user_id) {
+    std::error_code ec;
+    iguana::from_json(body, req.get_body(), ec);
+    uint64_t target_user_id = 0;
+    if (ec || !parse_u64(body.target_user_id, target_user_id) ||
+        target_user_id == user_id) {
       resp.set_status_and_content(status_type::bad_request, make_error("参数错误"));
       return;
     }
@@ -349,14 +436,14 @@ public:
     if (!conn) { set_server_internel_error(resp); return; }
     // 已拉黑则幂等返回成功
     auto existing = conn->query_s<pm_blocklist_t>(
-        "user_id = ? AND blocked_user_id = ?", user_id, body.target_user_id);
+        "user_id = ? AND blocked_user_id = ?", user_id, target_user_id);
     if (!existing.empty()) {
       resp.set_status_and_content(status_type::ok, make_success("已在黑名单中"));
       return;
     }
     pm_blocklist_t bl{};
     bl.user_id = user_id;
-    bl.blocked_user_id = body.target_user_id;
+    bl.blocked_user_id = target_user_id;
     bl.created_at = get_timestamp_milliseconds();
     if (conn->insert(bl) < 0) { set_server_internel_error(resp); return; }
     resp.set_status_and_content(status_type::ok, make_success("已拉黑该用户"));
@@ -370,7 +457,7 @@ public:
       resp.set_status_and_content(status_type::unauthorized, make_error("未登录", 401));
       return;
     }
-    auto target_str = req.get_path_param("target_id");
+    auto target_str = req.params_["target_id"];
     if (target_str.empty()) {
       resp.set_status_and_content(status_type::bad_request, make_error("缺少 target_id"));
       return;
@@ -384,7 +471,7 @@ public:
     if (!conn) { set_server_internel_error(resp); return; }
     auto rows = conn->query_s<pm_blocklist_t>(
         "user_id = ? AND blocked_user_id = ?", user_id, target_id);
-    for (auto &bl : rows) conn->delete_records<pm_blocklist_t>("id = ?", bl.id);
+    for (auto &bl : rows) conn->delete_records_s<pm_blocklist_t>("id = ?", bl.id);
     resp.set_status_and_content(status_type::ok, make_success("已解除拉黑"));
   }
 
@@ -400,14 +487,11 @@ public:
     if (!conn) { set_server_internel_error(resp); return; }
     auto rows = conn->query_s<pm_blocklist_t>("user_id = ?", user_id);
 
-    struct blocked_user_view { uint64_t user_id = 0; std::string user_name; uint64_t created_at = 0; };
-    YLT_REFL(blocked_user_view, user_id, user_name, created_at);
-
     std::vector<blocked_user_view> result;
     for (auto &bl : rows) {
       auto users = conn->query_s<users_t>("id = ?", bl.blocked_user_id);
       blocked_user_view v{};
-      v.user_id = bl.blocked_user_id;
+      v.user_id = std::to_string(bl.blocked_user_id);
       v.user_name = users.empty() ? "" : array_to_string(users[0].user_name);
       v.created_at = bl.created_at;
       result.push_back(std::move(v));

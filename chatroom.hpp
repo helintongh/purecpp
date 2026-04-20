@@ -124,6 +124,10 @@ struct chat_create_channel_req {
   uint32_t is_private;
 };
 
+struct chat_open_direct_req {
+  std::string target_user_name;
+};
+
 struct chat_delete_channel_req {
   uint64_t channel_id = 0;
 };
@@ -309,13 +313,15 @@ struct chat_channel_view {
   std::string name;
   std::string topic;
   uint32_t is_private = 0;
+  uint32_t is_direct = 0;
+  uint64_t peer_user_id = 0;
   uint64_t creator_id = 0;
   uint64_t created_at = 0;
   uint64_t unread = 0;
   bool joined = true;
 };
-YLT_REFL(chat_channel_view, id, name, topic, is_private, creator_id,
-         created_at, unread, joined);
+YLT_REFL(chat_channel_view, id, name, topic, is_private, is_direct,
+         peer_user_id, creator_id, created_at, unread, joined);
 
 struct chat_upload_resp {
   std::string url;
@@ -360,6 +366,12 @@ struct chat_ws_channel_activity {
   uint64_t unread_delta = 0;
 };
 YLT_REFL(chat_ws_channel_activity, type, channel_id, unread_delta);
+
+struct chat_ws_channel_upsert {
+  std::string type;
+  chat_channel_view channel;
+};
+YLT_REFL(chat_ws_channel_upsert, type, channel);
 
 struct chat_ws_reaction_update {
   std::string type;
@@ -501,11 +513,42 @@ inline std::vector<chat_online_user_view> make_online_user_views(
   return result;
 }
 
+inline bool is_direct_channel_name(std::string_view name) {
+  return name.rfind("__dm__", 0) == 0;
+}
+
 inline chat_channel_view make_chat_channel_view(const chat_channel_t &ch,
-                                                uint64_t unread) {
-  return {ch.id,        arr_to_str(ch.name),  arr_to_str(ch.topic),
-          ch.is_private, ch.creator_id,        ch.created_at,
-          unread,       true};
+                                                uint64_t unread,
+                                                uint64_t peer_user_id = 0,
+                                                std::string display_name = {},
+                                                std::string display_topic = {}) {
+  const auto raw_name = arr_to_str(ch.name);
+  const auto raw_topic = arr_to_str(ch.topic);
+  const bool is_direct = ch.is_private && is_direct_channel_name(raw_name);
+  return {ch.id,
+          display_name.empty() ? raw_name : std::move(display_name),
+          display_topic.empty() ? raw_topic : std::move(display_topic),
+          ch.is_private,
+          static_cast<uint32_t>(is_direct ? 1 : 0),
+          peer_user_id,
+          ch.creator_id,
+          ch.created_at,
+          unread,
+          true};
+}
+
+inline chat_channel_view make_direct_channel_view(const chat_channel_t &ch,
+                                                  uint64_t peer_user_id,
+                                                  std::string peer_name,
+                                                  uint64_t unread = 0) {
+  std::string topic = peer_name.empty()
+                          ? "与成员的私聊"
+                          : ("与 " + peer_name + " 的私聊");
+  if (peer_name.empty()) {
+    peer_name = "用户 " + std::to_string(peer_user_id);
+  }
+  return make_chat_channel_view(ch, unread, peer_user_id, std::move(peer_name),
+                                std::move(topic));
 }
 
 inline std::string
@@ -1355,6 +1398,19 @@ public:
     co_return;
   }
 
+  async_simple::coro::Lazy<void> send_to_user(uint64_t user_id,
+                                              std::string payload,
+                                              priority prio = priority::normal) {
+    auto shared_payload =
+        std::make_shared<const std::string>(std::move(payload));
+    std::shared_lock lk(mtx_);
+    for (auto &[_, state] : sessions_) {
+      if (!state || state->user_id != user_id) continue;
+      enqueue_frame(state, shared_payload, prio);
+    }
+    co_return;
+  }
+
   void subscribe_channel(uint64_t key, uint64_t channel_id) {
     if (channel_id == 0) return;
     std::unique_lock lk(mtx_);
@@ -1363,6 +1419,18 @@ public:
     auto inserted = it->second->subscribed_channels.insert(channel_id);
     if (inserted.second) {
       channel_subscriber_keys_[channel_id].insert(key);
+    }
+  }
+
+  void subscribe_user_sessions(uint64_t user_id, uint64_t channel_id) {
+    if (user_id == 0 || channel_id == 0) return;
+    std::unique_lock lk(mtx_);
+    for (auto &[key, state] : sessions_) {
+      if (!state || state->user_id != user_id) continue;
+      auto inserted = state->subscribed_channels.insert(channel_id);
+      if (inserted.second) {
+        channel_subscriber_keys_[channel_id].insert(key);
+      }
     }
   }
 
@@ -1693,6 +1761,36 @@ public:
       visible.push_back(ch);
     }
 
+    std::unordered_map<uint64_t, std::vector<uint64_t>> channel_members;
+    std::unordered_map<uint64_t, std::string> user_name_map;
+    if (!visible.empty()) {
+      auto all_members = conn->select(ormpp::all).from<chat_channel_member_t>().collect();
+      for (auto &member : all_members) {
+        channel_members[member.channel_id].push_back(member.user_id);
+      }
+
+      std::unordered_set<uint64_t> member_user_ids;
+      for (auto &ch : channels) {
+        if (!ch.is_private || !is_direct_channel_name(arr_to_str(ch.name))) {
+          continue;
+        }
+        auto it = channel_members.find(ch.id);
+        if (it == channel_members.end()) continue;
+        for (auto member_id : it->second) {
+          member_user_ids.insert(member_id);
+        }
+      }
+
+      if (!member_user_ids.empty()) {
+        auto all_users = conn->select(ormpp::all).from<users_t>().collect();
+        for (auto &user : all_users) {
+          if (member_user_ids.find(user.id) != member_user_ids.end()) {
+            user_name_map[user.id] = arr_to_str(user.user_name);
+          }
+        }
+      }
+    }
+
     std::ostringstream os;
     os << R"({"success":true,"message":"获取频道列表成功","code":200,"data":[)";
     bool first = true;
@@ -1709,10 +1807,35 @@ public:
           ch.message_count > last_read_seq ? ch.message_count - last_read_seq
                                            : 0;
 
+      std::string display_name = arr_to_str(ch.name);
+      std::string display_topic = arr_to_str(ch.topic);
+      uint64_t peer_user_id = 0;
+      if (ch.is_private && is_direct_channel_name(display_name)) {
+        display_topic = "与成员的私聊";
+        auto member_it = channel_members.find(ch.id);
+        if (member_it != channel_members.end()) {
+          for (auto member_id : member_it->second) {
+            if (member_id == user_id) continue;
+            peer_user_id = member_id;
+            break;
+          }
+        }
+        if (peer_user_id != 0) {
+          auto name_it = user_name_map.find(peer_user_id);
+          display_name =
+              name_it != user_name_map.end() ? name_it->second
+                                             : ("用户 " + std::to_string(peer_user_id));
+          display_topic = "与 " + display_name + " 的私聊";
+        }
+      }
+
       os << R"({"id":)" << ch.id
-         << R"(,"name":")" << json_escape(arr_to_str(ch.name))
-         << R"(","topic":")" << json_escape(arr_to_str(ch.topic))
+         << R"(,"name":")" << json_escape(display_name)
+         << R"(","topic":")" << json_escape(display_topic)
          << R"(","is_private":)" << ch.is_private
+         << R"(,"is_direct":)"
+         << (ch.is_private && is_direct_channel_name(arr_to_str(ch.name)) ? 1 : 0)
+         << R"(,"peer_user_id":)" << peer_user_id
          << R"(,"creator_id":)" << ch.creator_id
          << R"(,"created_at":)" << ch.created_at
          << R"(,"unread":)" << unread
@@ -1744,6 +1867,11 @@ public:
 
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
+    if (!user_can_access_channel(user_id, info.channel_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("无权访问该频道", 403));
+      return;
+    }
 
     uint64_t last_read_seq = 0;
     if (info.last_message_id > 0) {
@@ -1888,6 +2016,12 @@ public:
 
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
+    auto user_id = get_user_id_from_token(req);
+    if (!user_can_access_channel(user_id, channel_id)) {
+      resp.set_status_and_content(status_type::forbidden,
+                                  make_error("无权访问该频道", 403));
+      return;
+    }
 
     auto query = conn->select(ormpp::all)
                      .from<chat_message_t>()
@@ -1942,6 +2076,7 @@ public:
 
     auto conn = get_db_pool().get();
     if (!conn) { set_server_internel_error(resp); return; }
+    auto user_id = get_user_id_from_token(req);
 
     uint64_t channel_id = 0;
     if (!ch_str.empty()) {
@@ -1950,6 +2085,11 @@ public:
       } catch (...) {
         resp.set_status_and_content(status_type::bad_request,
                                     make_error("channel_id 格式错误"));
+        return;
+      }
+      if (!user_can_access_channel(user_id, channel_id)) {
+        resp.set_status_and_content(status_type::forbidden,
+                                    make_error("无权访问该频道", 403));
         return;
       }
     }
@@ -1985,6 +2125,161 @@ public:
     os << "]}";
     resp.set_content_type<resp_content_type::json>();
     resp.set_status_and_content(status_type::ok, os.str());
+  }
+
+  // POST /api/v1/chat/direct_channel
+  void open_direct_channel(coro_http_request &req, coro_http_response &resp) {
+    auto user_id = get_user_id_from_token(req);
+    if (user_id == 0) {
+      resp.set_status_and_content(status_type::unauthorized,
+                                  make_error("未授权"));
+      return;
+    }
+
+    auto body = req.get_body();
+    if (body.empty()) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("请求体不能为空"));
+      return;
+    }
+
+    chat_open_direct_req info{};
+    std::error_code ec;
+    iguana::from_json(info, body, ec);
+    if (ec || info.target_user_name.empty()) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("目标用户参数错误"));
+      return;
+    }
+
+    auto conn = get_db_pool().get();
+    if (!conn) {
+      set_server_internel_error(resp);
+      return;
+    }
+
+    auto users = conn->select(ormpp::all)
+                     .from<users_t>()
+                     .where(col(&users_t::user_name).param())
+                     .collect(info.target_user_name);
+    if (users.empty()) {
+      resp.set_status_and_content(status_type::not_found,
+                                  make_error("目标用户不存在", 404));
+      return;
+    }
+
+    const auto target_user_id = users[0].id;
+    if (target_user_id == user_id) {
+      resp.set_status_and_content(status_type::bad_request,
+                                  make_error("不能和自己发起私聊"));
+      return;
+    }
+
+    const auto peer_name = arr_to_str(users[0].user_name);
+    std::string self_name;
+    {
+      auto self_users = conn->select(ormpp::all)
+                            .from<users_t>()
+                            .where(col(&users_t::id).param())
+                            .collect(user_id);
+      if (!self_users.empty()) {
+        self_name = arr_to_str(self_users[0].user_name);
+      }
+    }
+    if (self_name.empty()) {
+      self_name = "用户 " + std::to_string(user_id);
+    }
+    const auto dm_low = (std::min)(user_id, target_user_id);
+    const auto dm_high = (std::max)(user_id, target_user_id);
+    const std::string internal_name =
+        "__dm__" + std::to_string(dm_low) + "_" + std::to_string(dm_high);
+    static std::mutex direct_channel_open_mtx;
+    std::scoped_lock direct_channel_lock(direct_channel_open_mtx);
+
+    auto calc_unread = [&](uint64_t viewer_user_id,
+                           const chat_channel_t &channel) -> uint64_t {
+      auto read_positions = conn->select(ormpp::all)
+                                .from<chat_read_position_t>()
+                                .where(col(&chat_read_position_t::user_id).param() &&
+                                       col(&chat_read_position_t::channel_id).param())
+                                .collect(viewer_user_id, channel.id);
+      uint64_t last_read_seq = 0;
+      if (!read_positions.empty()) {
+        last_read_seq = read_positions[0].last_read_channel_seq;
+      }
+      return channel.message_count > last_read_seq
+                 ? channel.message_count - last_read_seq
+                 : 0;
+    };
+
+    auto build_rest_ok = [&](const chat_channel_view &view) {
+      resp.set_content_type<resp_content_type::json>();
+      resp.set_status_and_content(
+          status_type::ok, make_data(view, "打开私聊成功"));
+    };
+
+    auto notify_direct_channel_upsert = [&](const chat_channel_t &channel) {
+      auto self_view = make_direct_channel_view(
+          channel, target_user_id, peer_name, calc_unread(user_id, channel));
+      auto peer_view = make_direct_channel_view(
+          channel, user_id, self_name, calc_unread(target_user_id, channel));
+      auto self_payload = to_json_string(
+          chat_ws_channel_upsert{"channel_upsert", std::move(self_view)});
+      auto peer_payload = to_json_string(
+          chat_ws_channel_upsert{"channel_upsert", std::move(peer_view)});
+
+      chat_hub::instance().subscribe_user_sessions(user_id, channel.id);
+      chat_hub::instance().subscribe_user_sessions(target_user_id, channel.id);
+      async_simple::coro::syncAwait(chat_hub::instance().send_to_user(
+          user_id, std::move(self_payload), chat_hub::priority::normal));
+      async_simple::coro::syncAwait(chat_hub::instance().send_to_user(
+          target_user_id, std::move(peer_payload), chat_hub::priority::normal));
+    };
+
+    auto try_return_existing_direct_channel = [&]() -> bool {
+      auto channels = conn->select(ormpp::all).from<chat_channel_t>().collect();
+      for (auto &channel : channels) {
+        if (!channel.is_private) continue;
+        if (arr_to_str(channel.name) != internal_name) continue;
+        ensure_direct_membership(conn, channel.id, user_id);
+        ensure_direct_membership(conn, channel.id, target_user_id);
+        chat_channel_cache::instance().put(channel);
+        notify_direct_channel_upsert(channel);
+        build_rest_ok(
+            make_direct_channel_view(channel, target_user_id, peer_name));
+        return true;
+      }
+      return false;
+    };
+
+    if (try_return_existing_direct_channel()) {
+      return;
+    }
+
+    chat_channel_t ch{};
+    str_to_arr(ch.name, internal_name);
+    str_to_arr(ch.topic, "一对一私聊");
+    ch.creator_id = user_id;
+    ch.is_private = 1;
+    ch.created_at = get_timestamp_milliseconds();
+    ch.message_count = 0;
+
+    auto id = conn->get_insert_id_after_insert(ch);
+    if (id == 0) {
+      if (try_return_existing_direct_channel()) {
+        return;
+      }
+      resp.set_status_and_content(
+          status_type::internal_server_error, make_error("创建私聊失败"));
+      return;
+    }
+
+    ch.id = id;
+    ensure_direct_membership(conn, ch.id, user_id);
+    ensure_direct_membership(conn, ch.id, target_user_id);
+    chat_channel_cache::instance().put(ch);
+    notify_direct_channel_upsert(ch);
+    build_rest_ok(make_direct_channel_view(ch, target_user_id, peer_name));
   }
 
   // POST /api/v1/chat/channel
@@ -2404,6 +2699,26 @@ public:
   }
 
 private:
+  template <typename ConnPtr>
+  void ensure_direct_membership(const ConnPtr &conn,
+                                uint64_t channel_id, uint64_t member_user_id) {
+    if (!conn || channel_id == 0 || member_user_id == 0) return;
+
+    auto existing = conn->select(ormpp::all)
+                        .from<chat_channel_member_t>()
+                        .where(col(&chat_channel_member_t::channel_id).param() &&
+                               col(&chat_channel_member_t::user_id).param())
+                        .collect(channel_id, member_user_id);
+    if (!existing.empty()) return;
+
+    chat_channel_member_t member{};
+    member.channel_id = channel_id;
+    member.user_id = member_user_id;
+    member.joined_at = get_timestamp_milliseconds();
+    conn->insert(member);
+    chat_access_cache::instance().put(member_user_id, channel_id, true);
+  }
+
   bool is_chat_admin(uint64_t user_id) {
     if (user_id == 0) return false;
 

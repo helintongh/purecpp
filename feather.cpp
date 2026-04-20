@@ -560,6 +560,9 @@ int main() {
       "/api/v1/chat/channel", &chat_handler_t::create_channel, chat_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<POST>(
+      "/api/v1/chat/direct_channel", &chat_handler_t::open_direct_channel,
+      chat_h, log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
       "/api/v1/chat/delete_channel", &chat_handler_t::delete_channel, chat_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<POST>(

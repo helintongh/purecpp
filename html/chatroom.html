@@ -1026,6 +1026,8 @@
             channels = (data.data || []).map(c => ({
                 id: c.id, name: c.name, topic: c.topic,
                 is_private: c.is_private || 0, creator_id: c.creator_id || 0,
+                is_direct: c.is_direct || 0,
+                peer_user_id: c.peer_user_id || 0,
                 unread: c.unread || 0,
                 is_system: (c.id || 0) <= 3
             }));
@@ -1131,6 +1133,19 @@
             });
             const data = await res.json();
             if (!data.success) throw new Error(data.message || '创建失败');
+            return data.data;
+        }
+
+        async function openDirectChannelApi(targetUserName) {
+            const res = await authorizedFetch('/api/v1/chat/direct_channel', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ target_user_name: targetUserName })
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.message || '打开私聊失败');
             return data.data;
         }
 
@@ -1275,6 +1290,22 @@
                     break;
                 }
 
+                case 'channel_upsert': {
+                    if (!msg.channel || !msg.channel.id) break;
+                    upsertChannel(msg.channel);
+                    if (!messages[msg.channel.id]) {
+                        messages[msg.channel.id] = [];
+                    }
+                    renderChannels();
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        wsSend({ type: 'subscribe_channel', channel_id: msg.channel.id }, { silent: true });
+                    }
+                    if (msg.channel.id === currentChannelId) {
+                        updateChannelHeader();
+                    }
+                    break;
+                }
+
                 case 'presence_join':
                     if (msg.user && !onlineUsers.find(u => u.id === msg.user.id)) {
                         onlineUsers.push(msg.user);
@@ -1377,7 +1408,10 @@
         // ========== 渲染：频道列表 ==========
         function renderChannels() {
             channelList.innerHTML = '';
-            channels.forEach(channel => {
+            const publicChannels = channels.filter(channel => !channel.is_direct);
+            const directChannels = channels.filter(channel => channel.is_direct);
+
+            publicChannels.forEach(channel => {
                 const li = document.createElement('li');
                 li.className = `channel-item ${channel.id === currentChannelId ? 'active' : ''}`;
                 li.dataset.channelId = channel.id;
@@ -1391,6 +1425,30 @@
                 `;
                 channelList.appendChild(li);
             });
+
+            if (directChannels.length > 0) {
+                const divider = document.createElement('li');
+                divider.className = 'channel-item';
+                divider.style.cursor = 'default';
+                divider.style.opacity = '0.75';
+                divider.innerHTML = `
+                    <i class="fas fa-user-friends"></i>
+                    <span class="channel-item-text">私聊</span>
+                `;
+                channelList.appendChild(divider);
+
+                directChannels.forEach(channel => {
+                    const li = document.createElement('li');
+                    li.className = `channel-item ${channel.id === currentChannelId ? 'active' : ''}`;
+                    li.dataset.channelId = channel.id;
+                    li.innerHTML = `
+                        <i class="fas fa-user"></i>
+                        <span class="channel-item-text">${escapeHtml(channel.name)}</span>
+                        ${channel.unread > 0 ? `<span class="mention-badge">${channel.unread}</span>` : ''}
+                    `;
+                    channelList.appendChild(li);
+                });
+            }
         }
 
         async function handleChannelDeleted(channelId) {
@@ -1431,12 +1489,15 @@
                     <div class="user-avatar" style="background-color: ${color};">${avatar}</div>
                     <div class="user-item-text">${escapeHtml(user.name)}</div>
                 `;
-                li.addEventListener('click', (e) => {
+                li.addEventListener('click', async (e) => {
                     if (user.id === currentUser.id) return;
-                    if (isChatAdmin()) {
-                        showMuteMenu(user, li, e);
-                    } else {
-                        alert(`私信 ${user.name} 功能暂未开放`);
+                    try {
+                        const ch = await openDirectChannelApi(user.name);
+                        upsertChannel(ch);
+                        renderChannels();
+                        await switchChannel(ch.id);
+                    } catch (err) {
+                        alert('打开私聊失败：' + err.message);
                     }
                 });
                 userList.appendChild(li);
@@ -1451,6 +1512,26 @@
 
         function renderChannelUsers() {
             return;
+        }
+
+        function upsertChannel(ch) {
+            const normalized = {
+                id: ch.id,
+                name: ch.name,
+                topic: ch.topic,
+                is_private: ch.is_private || 0,
+                creator_id: ch.creator_id || 0,
+                is_direct: ch.is_direct || 0,
+                peer_user_id: ch.peer_user_id || 0,
+                unread: ch.unread || 0,
+                is_system: (ch.id || 0) <= 3
+            };
+            const idx = channels.findIndex(item => item.id === normalized.id);
+            if (idx >= 0) {
+                channels[idx] = { ...channels[idx], ...normalized };
+            } else {
+                channels.push(normalized);
+            }
         }
 
         // ========== 渲染：消息 ==========
@@ -1957,11 +2038,7 @@
 
             try {
                 const ch = await createChannelApi(name, `${name} 频道`);
-                channels.push({
-                    id: ch.id, name: ch.name, topic: ch.topic,
-                    is_private: ch.is_private, creator_id: ch.creator_id, unread: 0,
-                    is_system: (ch.id || 0) <= 3
-                });
+                upsertChannel(ch);
                 renderChannels();
                 await switchChannel(ch.id);
             } catch (e) {

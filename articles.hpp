@@ -4,6 +4,9 @@
 #include "common.hpp"
 #include "user_aspects.hpp"
 
+#include <iguana/xml_writer.hpp>
+
+#include <map>
 #include <random>
 
 using namespace cinatra;
@@ -94,6 +97,44 @@ struct article_delete_request {
 struct article_toggle_featured_request {
   std::string slug;
 };
+
+struct rss_item {
+  std::string title;
+  std::string link;
+  std::string description;
+  std::string author;
+  std::string pubDate;
+  std::string guid;
+};
+YLT_REFL(rss_item, title, link, description, author, pubDate, guid);
+
+struct rss_channel {
+  std::string title;
+  std::string link;
+  std::string description;
+  std::string language;
+  std::string lastBuildDate;
+  std::vector<rss_item> item;
+};
+YLT_REFL(rss_channel, title, link, description, language, lastBuildDate, item);
+
+struct rss_feed {
+  rss_channel channel;
+};
+YLT_REFL(rss_feed, channel);
+
+inline constexpr std::string_view get_alias_struct_name(rss_feed *) {
+  return "rss";
+}
+
+struct rss_article_row {
+  std::string title;
+  std::string abstraction;
+  std::string slug;
+  std::string user_name;
+  uint64_t created_at;
+};
+YLT_REFL(rss_article_row, title, abstraction, slug, user_name, created_at);
 
 inline void generate_random_string(auto &random_str) {
   static const std::string chars = "abcdefghijklmnopqrstuvwxyz"
@@ -247,9 +288,11 @@ public:
     }
 
     // 先更新浏览量
-    conn->execute(
-        "UPDATE `articles` SET views_count = views_count + 1 WHERE slug = '" +
-        std::string(slug) + "'");
+    conn->update<articles_t>()
+        .set(col(&articles_t::views_count),
+             ormpp::raw_sql("views_count + 1"))
+        .where(col(&articles_t::slug) == std::string(slug))
+        .execute();
 
     // 再获取文章详情
     auto list =
@@ -285,26 +328,20 @@ public:
     }
 
     // 文章编辑以后，上次审核结果也删掉
-    articles_t article{};
-    article.tag_ids = info.tag_ids;
-    article.title = info.title;
-    article.abstraction = info.excerpt;
-    article.content = info.content;
-    article.status = PENDING_REVIEW.data();
-    article.reviewer_id = 0;
-    article.review_comment = "";
-    article.review_date = 0;
-    article.updated_at = get_timestamp_milliseconds();
-
-    // 使用安全的字符串拼接，避免SQL注入风险
-    std::string slug = "slug='";
-    slug.append(info.slug).append("'");
-    int n =
-        conn->update_some<&articles_t::tag_ids, &articles_t::title,
-                          &articles_t::abstraction, &articles_t::content,
-                          &articles_t::status, &articles_t::reviewer_id,
-                          &articles_t::review_comment, &articles_t::review_date,
-                          &articles_t::updated_at>(article, slug);
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::tag_ids), info.tag_ids)
+                .set(col(&articles_t::title), info.title)
+                .set(col(&articles_t::abstraction), info.excerpt)
+                .set(col(&articles_t::content), info.content)
+                .set(col(&articles_t::status),
+                     std::string(PENDING_REVIEW.data()))
+                .set(col(&articles_t::reviewer_id), 0)
+                .set(col(&articles_t::review_comment), std::string{})
+                .set(col(&articles_t::review_date), 0)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == info.slug)
+                .execute();
 
     if (n == 0) {
       set_server_internel_error(resp);
@@ -567,20 +604,18 @@ public:
     }
 
     // 更新最近一次审核状态及意见
-    articles_t article{};
-    article.reviewer_id = review_user.id;
-    article.review_date = get_timestamp_milliseconds();
-    article.review_comment = request.review_comment;
-    article.status =
-        request.review_status == REVIEW_ACCEPTED ? PUBLISHED : REJECTED;
-
-    // 使用安全的字符串拼接，避免SQL注入风险
-    std::string slug = "slug='";
-    slug.append(request.slug).append("'");
-    int n =
-        conn->update_some<&articles_t::reviewer_id, &articles_t::review_date,
-                          &articles_t::review_comment, &articles_t::status>(
-            article, slug);
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::reviewer_id), review_user.id)
+                .set(col(&articles_t::review_date),
+                     get_timestamp_milliseconds())
+                .set(col(&articles_t::review_comment),
+                     request.review_comment)
+                .set(col(&articles_t::status),
+                     request.review_status == REVIEW_ACCEPTED
+                         ? std::string(PUBLISHED)
+                         : std::string(REJECTED))
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
     if (n == 0) {
       set_server_internel_error(resp);
       return;
@@ -802,11 +837,12 @@ public:
     }
 
     // 标记文章为已删除
-    articles_t article;
-    article.is_deleted = true;
-    article.updated_at = get_timestamp_milliseconds();
-    int n = conn->update_some<&articles_t::is_deleted, &articles_t::updated_at>(
-        article, "slug='" + request.slug + "'");
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::is_deleted), true)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
     if (n == 0) {
       set_server_internel_error(resp);
       return;
@@ -1099,12 +1135,12 @@ public:
     }
 
     // 更新tag_ids值
-    articles_t article;
-    article.tag_ids = new_tag_ids;
-    article.updated_at = get_timestamp_milliseconds();
-
-    int n = conn->update_some<&articles_t::tag_ids, &articles_t::updated_at>(
-        article, "slug='" + request.slug + "'");
+    int n = conn->update<articles_t>()
+                .set(col(&articles_t::tag_ids), new_tag_ids)
+                .set(col(&articles_t::updated_at),
+                     get_timestamp_milliseconds())
+                .where(col(&articles_t::slug) == request.slug)
+                .execute();
 
     if (n == 0) {
       set_server_internel_error(resp);
@@ -1147,6 +1183,68 @@ public:
       return;
     }
     resp.set_status_and_content(status_type::ok, std::move(json));
+  }
+
+  void get_rss_feed(coro_http_request &req, coro_http_response &resp) {
+    auto conn = get_db_pool().get();
+    if (conn == nullptr) {
+      set_server_internel_error(resp);
+      return;
+    }
+
+    // ormpp maps selected columns to the target type positionally,
+    // so RSS uses a dedicated 5-field projection instead of article_list.
+    auto articles_list =
+        conn->select(col(&articles_t::title), col(&articles_t::abstraction),
+                     col(&articles_t::slug), col(&users_t::user_name),
+                     col(&articles_t::created_at))
+            .from<articles_t>()
+            .inner_join(col(&articles_t::author_id), col(&users_t::id))
+            .where(col(&articles_t::is_deleted) == 0 &&
+                   col(&articles_t::status) == std::string(PUBLISHED))
+            .order_by(col(&articles_t::created_at).desc())
+            .limit(20)
+            .collect<rss_article_row>();
+
+    auto base_url = get_base_url(req);
+    auto site_link = make_absolute_url(base_url, "/");
+
+    rss_feed feed{};
+    feed.channel.title = "PureCpp";
+    feed.channel.link = site_link;
+    feed.channel.description = "PureCpp 最新技术文章订阅";
+    feed.channel.language = "zh-cn";
+    feed.channel.lastBuildDate =
+        format_rss_pub_date(get_timestamp_milliseconds());
+    feed.channel.item.reserve(articles_list.size());
+
+    for (const auto &article : articles_list) {
+      rss_item item{};
+      item.title = article.title;
+      item.link = make_absolute_url(
+          base_url, "/article.html?slug=" + article.slug);
+      item.description = article.abstraction;
+      item.author = article.user_name;
+      item.pubDate = format_rss_pub_date(article.created_at);
+      item.guid = item.link;
+      feed.channel.item.emplace_back(std::move(item));
+    }
+
+    iguana::xml_attr_t<rss_feed, std::map<std::string, std::string>> xml_feed;
+    xml_feed.attr()["version"] = "2.0";
+    xml_feed.value() = std::move(feed);
+
+    std::string xml;
+    try {
+      iguana::to_xml<true>(xml_feed, xml);
+    } catch (const std::exception &e) {
+      CINATRA_LOG_ERROR << "generate rss feed failed: " << e.what();
+      set_server_internel_error(resp);
+      return;
+    }
+
+    resp.add_header("Content-Type", "application/rss+xml; charset=utf-8");
+    resp.set_status_and_content(status_type::ok, std::move(xml));
   }
 };
 } // namespace purecpp

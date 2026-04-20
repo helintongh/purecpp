@@ -77,8 +77,8 @@ struct users_t {
   uint64_t id;
   std::array<char, 254> user_name; // unique, not null
   std::array<char, 254> email;     // unique, not null
-  std::string_view pwd_hash;       // not null
-  std::string status;              // 在线状态Online, Offline, Away
+  std::string pwd_hash;       // not null
+  std::string status;         // 在线状态 Online, Offline, Away
   EmailVerifyStatus is_verifyed; // 邮箱是否已验证(0:未验证, 1:已验证)
   uint64_t created_at;
   uint64_t last_active_at; // 最后活跃时间
@@ -109,7 +109,7 @@ struct users_tmp_t {
   uint64_t id;
   std::array<char, 254> user_name; // unique, not null
   std::array<char, 254> email;     // unique, not null
-  std::string_view pwd_hash;       // not null
+  std::string pwd_hash;       // not null
   EmailVerifyStatus is_verifyed; // 邮箱是否已验证(0:未验证, 1:已验证)
   uint64_t created_at;
 };
@@ -266,6 +266,34 @@ struct user_experience_detail_t {
 REGISTER_AUTO_KEY(user_experience_detail_t, id);
 constexpr std::string_view get_alias_struct_name(user_experience_detail_t *) {
   return "user_experience_detail";
+}
+
+// 私信表
+struct private_message_t {
+  uint64_t id = 0;
+  uint64_t sender_id;
+  uint64_t receiver_id;
+  std::string content;
+  uint32_t is_read = 0;                  // 0=未读, 1=已读
+  uint32_t deleted_by_sender = 0;        // 发送者软删除
+  uint32_t deleted_by_receiver = 0;      // 接收者软删除
+  uint64_t created_at;
+};
+
+// 私信黑名单表
+struct pm_blocklist_t {
+  uint64_t id = 0;
+  uint64_t user_id;                      // 拉黑操作者
+  uint64_t blocked_user_id;             // 被拉黑的用户
+  uint64_t created_at;
+};
+REGISTER_AUTO_KEY(pm_blocklist_t, id);
+constexpr std::string_view get_alias_struct_name(pm_blocklist_t *) {
+  return "pm_blocklist";
+}
+REGISTER_AUTO_KEY(private_message_t, id);
+constexpr std::string_view get_alias_struct_name(private_message_t *) {
+  return "private_messages";
 }
 
 enum class TagGroupType : int32_t {

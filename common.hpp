@@ -2,6 +2,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 #include "config.hpp"
@@ -38,6 +43,63 @@ std::string array_to_string(const std::array<char, N>& arr) {
     return std::string(first, last);
 }
 
+inline std::string trim_trailing_slash(std::string url) {
+  while (url.size() > 1 && url.back() == '/') {
+    url.pop_back();
+  }
+  return url;
+}
+
+inline std::string get_base_url(coro_http_request &req) {
+  auto &config = purecpp_config::get_instance();
+  if (!config.user_cfg_.web_server_url.empty()) {
+    return trim_trailing_slash(config.user_cfg_.web_server_url);
+  }
+
+  auto host = req.get_header_value("Host");
+  if (host.empty()) {
+    return {};
+  }
+
+  auto scheme = req.get_scheme();
+  std::string_view normalized_scheme = scheme.empty() ? "https" : scheme;
+  return std::string(normalized_scheme) + "://" + std::string(host);
+}
+
+inline std::string make_absolute_url(std::string base_url, std::string_view path) {
+  if (base_url.empty()) {
+    return std::string(path);
+  }
+
+  if (!path.empty() && path.front() == '/') {
+    return std::move(base_url) + std::string(path);
+  }
+
+  return std::move(base_url) + "/" + std::string(path);
+}
+
+inline std::string format_rss_pub_date(uint64_t timestamp_milliseconds) {
+  auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::milliseconds(timestamp_milliseconds));
+  std::time_t timestamp = static_cast<std::time_t>(seconds.count());
+  std::tm utc_tm{};
+
+#ifdef _WIN32
+  if (gmtime_s(&utc_tm, &timestamp) != 0) {
+    return {};
+  }
+#else
+  if (gmtime_r(&timestamp, &utc_tm) == nullptr) {
+    return {};
+  }
+#endif
+
+  std::ostringstream oss;
+  oss.imbue(std::locale::classic());
+  oss << std::put_time(&utc_tm, "%a, %d %b %Y %H:%M:%S GMT");
+  return oss.str();
+}
+
 /**
  * @brief 生成简单的成功响应
  * @param msg 成功消息
@@ -70,9 +132,8 @@ inline std::string make_success(std::string msg = "") {
  * @return JSON格式的响应字符串
  */
 inline std::string make_error(std::string_view err_msg, int code = 400) {
-  rest_response<std::string_view> data{false, std::string(err_msg)};
+  rest_response<std::string> data{false, std::string(err_msg)};
   data.code = code;
-  // 设置当前时间戳
   auto now = get_timestamp_milliseconds();
   data.timestamp = std::to_string(now);
   std::string json;
@@ -367,19 +428,20 @@ inline uint64_t generate_user_id() {
   char time_buf[20];
   std::strftime(time_buf, sizeof(time_buf), "%Y%m%d%H%M%S", &tm_now);
 
-  // 获取纳秒部分
+  // 获取毫秒部分
   auto duration = now.time_since_epoch();
   auto millisenconds =
       std::chrono::duration_cast<std::chrono::milliseconds>(duration);
   auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
 
-  // 格式化为6位纳秒，确保只输出6位
-  char mill_buf[10];
-  std::snprintf(mill_buf, sizeof(mill_buf), "%03ld",
-                std::abs(millisenconds.count() - seconds.count() * 1000));
+  // 格式化为3位毫秒，避免 snprintf 整数格式符的跨平台差异。
+  auto mill_part = millisenconds - seconds;
+  std::ostringstream mill_buf;
+  mill_buf << std::setw(3) << std::setfill('0') << mill_part.count();
+
   // 组合时间和纳秒部分
   std::string id = time_buf;
-  id += mill_buf;
+  id += mill_buf.str();
 
   return std::stoull(id);
 }

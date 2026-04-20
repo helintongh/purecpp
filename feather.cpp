@@ -18,6 +18,7 @@
 #include "articles_aspects.hpp"
 #include "articles_comment.hpp"
 #include "chatroom.hpp"
+#include "private_message.hpp"
 #include "file_watcher.hpp"
 #include "sensitive_word_filter.hpp"
 #include "entity.hpp"
@@ -106,26 +107,46 @@ bool init_db() {
   }
 
   auto conn = pool.get();
-  conn->create_datatable<users_t>(
-      ormpp_key{"id"}, ormpp_unique{{"user_name"}}, ormpp_unique{{"email"}},
-      ormpp_not_null{{"user_name", "email", "pwd_hash"}});
+  conn->create_table<users_t>()
+      .primary_key(col(&users_t::id))
+      .unique(col(&users_t::user_name))
+      .unique(col(&users_t::email))
+      .not_null(col(&users_t::user_name), col(&users_t::email),
+                col(&users_t::pwd_hash))
+      .execute();
 
-  conn->create_datatable<users_tmp_t>(
-      ormpp_key{"id"}, ormpp_unique{{"user_name"}}, ormpp_unique{{"email"}},
-      ormpp_not_null{{"user_name", "email", "pwd_hash"}});
+  conn->create_table<users_tmp_t>()
+      .primary_key(col(&users_tmp_t::id))
+      .unique(col(&users_tmp_t::user_name))
+      .unique(col(&users_tmp_t::email))
+      .not_null(col(&users_tmp_t::user_name), col(&users_tmp_t::email),
+                col(&users_tmp_t::pwd_hash))
+      .execute();
 
-  conn->create_datatable<tags_t>(ormpp_auto_key{"tag_id"},
-                                 ormpp_unique{{"name"}});
-  conn->create_datatable<article_comments_t>(ormpp_auto_key{"comment_id"});
-  conn->create_datatable<articles_t>(ormpp_auto_key{"article_id"},
-                                     ormpp_unique{{"slug"}});
+  conn->create_table<tags_t>()
+      .auto_increment(col(&tags_t::tag_id))
+      .unique(col(&tags_t::name))
+      .execute();
+  conn->create_table<article_comments_t>()
+      .auto_increment(col(&article_comments_t::comment_id))
+      .execute();
+  conn->create_table<articles_t>()
+      .auto_increment(col(&articles_t::article_id))
+      .unique(col(&articles_t::slug))
+      .execute();
 
   // 创建密码重置token表
-  bool created = conn->create_datatable<users_token_t>(
-      ormpp_auto_key{"id"}, ormpp_unique{{"user_id", "token_type"}},
-      ormpp_unique{{"token"}},
-      ormpp_not_null{
-          {"user_id", "token_type", "token", "created_at", "expires_at"}});
+  bool created = conn->create_table<users_token_t>()
+                     .auto_increment(col(&users_token_t::id))
+                     .unique(col(&users_token_t::user_id),
+                             col(&users_token_t::token_type))
+                     .unique(col(&users_token_t::token))
+                     .not_null(col(&users_token_t::user_id),
+                               col(&users_token_t::token_type),
+                               col(&users_token_t::token),
+                               col(&users_token_t::created_at),
+                               col(&users_token_t::expires_at))
+                     .execute();
   if (created) {
     CINATRA_LOG_INFO << "Table 'users_token' created successfully.";
   } else {
@@ -133,10 +154,15 @@ bool init_db() {
   }
 
   // 创建经验值交易表
-  created = conn->create_datatable<user_experience_detail_t>(
-      ormpp_auto_key{"id"},
-      ormpp_not_null{{"user_id", "change_type", "experience_change",
-                      "balance_after_experience", "created_at"}});
+  created = conn->create_table<user_experience_detail_t>()
+                .auto_increment(col(&user_experience_detail_t::id))
+                .not_null(col(&user_experience_detail_t::user_id),
+                          col(&user_experience_detail_t::change_type),
+                          col(&user_experience_detail_t::experience_change),
+                          col(&user_experience_detail_t::
+                                  balance_after_experience),
+                          col(&user_experience_detail_t::created_at))
+                .execute();
   if (created) {
     CINATRA_LOG_INFO << "Table 'user_experience_detail' created successfully.";
   } else {
@@ -144,10 +170,15 @@ bool init_db() {
   }
 
   // 创建特权表
-  created = conn->create_datatable<privileges_t>(
-      ormpp_auto_key{"id"},
-      ormpp_not_null{{"privilege_type", "name", "description", "points_cost",
-                      "duration_days", "is_active"}});
+  created = conn->create_table<privileges_t>()
+                .auto_increment(col(&privileges_t::id))
+                .not_null(col(&privileges_t::privilege_type),
+                          col(&privileges_t::name),
+                          col(&privileges_t::description),
+                          col(&privileges_t::points_cost),
+                          col(&privileges_t::duration_days),
+                          col(&privileges_t::is_active))
+                .execute();
   if (created) {
     CINATRA_LOG_INFO << "Table 'privileges' created successfully.";
   } else {
@@ -155,10 +186,15 @@ bool init_db() {
   }
 
   // 创建用户特权表
-  created = conn->create_datatable<user_privileges_t>(
-      ormpp_auto_key{"id"},
-      ormpp_not_null{{"user_id", "privilege_id", "start_time", "end_time",
-                      "is_active", "created_at"}});
+  created = conn->create_table<user_privileges_t>()
+                .auto_increment(col(&user_privileges_t::id))
+                .not_null(col(&user_privileges_t::user_id),
+                          col(&user_privileges_t::privilege_id),
+                          col(&user_privileges_t::start_time),
+                          col(&user_privileges_t::end_time),
+                          col(&user_privileges_t::is_active),
+                          col(&user_privileges_t::created_at))
+                .execute();
   if (created) {
     CINATRA_LOG_INFO << "Table 'user_privileges' created successfully.";
   } else {
@@ -166,9 +202,13 @@ bool init_db() {
   }
 
   // 创建打赏记录表
-  created = conn->create_datatable<user_gifts_t>(
-      ormpp_auto_key{"id"}, ormpp_not_null{{"sender_id", "receiver_id",
-                                            "points_amount", "created_at"}});
+  created = conn->create_table<user_gifts_t>()
+                .auto_increment(col(&user_gifts_t::id))
+                .not_null(col(&user_gifts_t::sender_id),
+                          col(&user_gifts_t::receiver_id),
+                          col(&user_gifts_t::experience_amount),
+                          col(&user_gifts_t::created_at))
+                .execute();
   if (created) {
     CINATRA_LOG_INFO << "Table 'user_gifts' created successfully.";
   } else {
@@ -207,6 +247,12 @@ int main() {
   // 初始化聊天室数据库
   if (!init_chat_db()) {
     CINATRA_LOG_ERROR << "init chat db failed";
+    return -1;
+  }
+
+  // 初始化私信数据库
+  if (!init_pm_db()) {
+    CINATRA_LOG_ERROR << "init private message db failed";
     return -1;
   }
 
@@ -354,6 +400,9 @@ int main() {
       log_request_response{}, check_token{}, experience_reward_aspect{});
   server.set_http_handler<POST>("/api/v1/get_articles", &articles::get_articles,
                                 article, log_request_response{});
+
+  server.set_http_handler<GET>("/rss.xml", &articles::get_rss_feed, article,
+                               log_request_response{});
 
   server.set_http_handler<GET>("/api/v1/article/:slug", &articles::show_article,
                                article, log_request_response{});
@@ -511,6 +560,9 @@ int main() {
       "/api/v1/chat/channel", &chat_handler_t::create_channel, chat_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<POST>(
+      "/api/v1/chat/direct_channel", &chat_handler_t::open_direct_channel,
+      chat_h, log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
       "/api/v1/chat/delete_channel", &chat_handler_t::delete_channel, chat_h,
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<POST>(
@@ -527,6 +579,39 @@ int main() {
       log_request_response{}, check_token{}, rate_limiter_aspect{});
   server.set_http_handler<GET>(
       "/ws/chat", &chat_handler_t::handle_ws, chat_h);
+
+  // 私信路由
+  private_message_handler_t pm_h{};
+  server.set_http_handler<POST>(
+      "/api/v1/pm/send", &private_message_handler_t::send_message, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/inbox", &private_message_handler_t::get_inbox, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/sent", &private_message_handler_t::get_sentbox, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/history", &private_message_handler_t::get_history, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<DEL>(
+      "/api/v1/pm/:id", &private_message_handler_t::delete_message, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/pm/mark_read", &private_message_handler_t::mark_read, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/unread_count", &private_message_handler_t::get_unread_count, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<POST>(
+      "/api/v1/pm/block", &private_message_handler_t::block_user, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<DEL>(
+      "/api/v1/pm/block/:target_id", &private_message_handler_t::unblock_user, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
+  server.set_http_handler<GET>(
+      "/api/v1/pm/blocklist", &private_message_handler_t::get_blocklist, pm_h,
+      log_request_response{}, check_token{}, rate_limiter_aspect{});
 
   server.sync_start();
 }

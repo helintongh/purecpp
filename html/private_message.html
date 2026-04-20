@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>私信 - PureCpp</title>
+    <link rel="icon" href="logo.png" type="image/png">
+    <link rel="stylesheet" href="css/pico.min.css">
+    <link rel="stylesheet" href="font-awesome/css/all.min.css">
+    <link rel="stylesheet" href="css/purecpp.css">
+    <script defer src="script/alpine.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        main { flex: 1; }
+
+        .pm-layout {
+            display: flex;
+            height: calc(100vh - 120px);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 1rem;
+        }
+
+        /* 左侧联系人列表 */
+        .pm-sidebar {
+            width: 280px;
+            flex-shrink: 0;
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-card);
+        }
+        .pm-sidebar-header {
+            padding: 1rem;
+            font-weight: 600;
+            font-size: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .pm-mailbox-tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.35rem;
+            padding: 0.65rem 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .pm-mailbox-tab {
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            padding: 0.35rem 0.5rem;
+            background: var(--bg-page);
+            color: var(--muted-color);
+            cursor: pointer;
+            font-size: 0.82rem;
+        }
+        .pm-mailbox-tab.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+        .pm-contact-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .pm-contact-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.15s;
+            gap: 0.75rem;
+        }
+        .pm-contact-item:hover, .pm-contact-item.active {
+            background: var(--bg-search);
+        }
+        .pm-contact-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .pm-contact-info { flex: 1; min-width: 0; }
+        .pm-contact-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pm-contact-preview {
+            font-size: 0.78rem;
+            color: var(--muted-color);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 2px;
+        }
+        .pm-contact-time {
+            font-size: 0.68rem;
+            color: var(--muted-color);
+            margin-top: 0.2rem;
+        }
+        .pm-unread-badge {
+            background: #e53e3e;
+            color: white;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            padding: 1px 6px;
+            min-width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        /* 右侧对话区 */
+        .pm-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-page);
+            min-width: 0;
+        }
+        .pm-chat-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--bg-card);
+        }
+        .pm-chat-header-actions { display: flex; gap: 0.5rem; }
+        .pm-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        .pm-msg-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-end;
+        }
+        .pm-msg-row.own { flex-direction: row-reverse; }
+        .pm-msg-body {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            min-width: 0;
+            max-width: min(70%, 40rem);
+        }
+        .pm-msg-row.own .pm-msg-body {
+            align-items: flex-end;
+        }
+        .pm-msg-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .pm-msg-bubble {
+            max-width: 100%;
+            width: fit-content;
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            position: relative;
+        }
+        .pm-msg-row:not(.own) .pm-msg-bubble {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 4px;
+        }
+        .pm-msg-row.own .pm-msg-bubble {
+            background: color-mix(in srgb, var(--primary) 15%, var(--bg-card));
+            border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+            border-bottom-right-radius: 4px;
+        }
+        .pm-msg-meta {
+            font-size: 0.7rem;
+            color: var(--muted-color);
+            margin-top: 3px;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .pm-msg-row.own .pm-msg-meta { justify-content: flex-end; }
+        .pm-msg-sender {
+            font-size: 0.78rem;
+            color: var(--muted-color);
+            margin-bottom: 0.25rem;
+        }
+        .pm-msg-row.own .pm-msg-sender {
+            text-align: right;
+        }
+        .pm-delete-btn {
+            background: none;
+            border: none;
+            color: var(--muted-color);
+            cursor: pointer;
+            padding: 0;
+            font-size: 0.7rem;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .pm-msg-row:hover .pm-delete-btn { opacity: 1; }
+        .pm-delete-btn:hover { color: #e53e3e; }
+
+        /* 输入区 */
+        .pm-input-area {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-card);
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-end;
+        }
+        .pm-input-area textarea {
+            flex: 1;
+            resize: none;
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.9rem;
+            min-height: 40px;
+            max-height: 120px;
+            margin: 0;
+        }
+        .pm-send-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+        .pm-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* 空状态 */
+        .pm-empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted-color);
+            gap: 0.5rem;
+        }
+        .pm-empty i { font-size: 3rem; opacity: 0.3; }
+
+        /* 黑名单弹窗 */
+        .pm-modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pm-modal {
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 1.5rem;
+            width: 400px;
+            max-width: 90vw;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .pm-modal h3 { margin-top: 0; }
+        .pm-blocklist-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        /* 加载提示 */
+        .pm-loading { text-align: center; color: var(--muted-color); padding: 2rem; }
+
+        @media (max-width: 640px) {
+            .pm-sidebar { width: 100%; }
+            .pm-layout { flex-direction: column; height: auto; }
+            .pm-main { display: none; }
+            .pm-main.active { display: flex; height: 70vh; }
+        }
+    </style>
+</head>
+<body>
+<div id="header-container"></div>
+
+<main>
+<div class="page-wrapper">
+<div id="pm-app" x-data="pmApp()" x-init="init()">
+
+    <template x-if="hasPrivilege">
+    <div class="pm-layout">
+        <!-- 左侧联系人列表 -->
+        <div class="pm-sidebar">
+            <div class="pm-sidebar-header">
+                <span><i class="fas fa-envelope" style="margin-right:0.4rem;"></i>私信</span>
+                <button class="pm-send-btn" style="padding:0.3rem 0.7rem;font-size:0.8rem;" @click="openNewMsg()">
+                    <i class="fas fa-edit"></i> 新建
+                </button>
+            </div>
+            <div class="pm-mailbox-tabs">
+                <button class="pm-mailbox-tab" :class="{active: mailbox === 'inbox'}" @click="switchMailbox('inbox')">
+                    收件箱
+                </button>
+                <button class="pm-mailbox-tab" :class="{active: mailbox === 'sent'}" @click="switchMailbox('sent')">
+                    发件箱
+                </button>
+            </div>
+            <div class="pm-contact-list">
+                <template x-if="messagesList.length === 0 && !loading">
+                    <div class="pm-loading">暂无私信</div>
+                </template>
+                <template x-for="item in messagesList" :key="item.id">
+                    <div class="pm-contact-item" :class="{active: activeMessage && activeMessage.id === item.id}"
+                         @click="selectMessage(item)">
+                        <div class="pm-contact-avatar" x-text="mailboxPeerName(item) ? mailboxPeerName(item)[0].toUpperCase() : '?'"></div>
+                        <div class="pm-contact-info">
+                            <div class="pm-contact-name" x-text="mailboxTitle(item)"></div>
+                            <div class="pm-contact-preview" x-text="item.content"></div>
+                            <div class="pm-contact-time" x-text="formatTime(item.created_at)"></div>
+                        </div>
+                        <template x-if="mailbox === 'inbox' && item.is_read == 0">
+                            <span class="pm-unread-badge">未读</span>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <!-- 黑名单入口 -->
+            <div style="padding:0.75rem 1rem;border-top:1px solid var(--border-color);">
+                <a href="#" @click.prevent="openBlocklist()" style="font-size:0.82rem;color:var(--muted-color);">
+                    <i class="fas fa-ban"></i> 黑名单管理
+                </a>
+            </div>
+        </div>
+
+        <!-- 右侧对话区 -->
+        <div class="pm-main" :class="{active: activeMessage !== null}">
+            <!-- 未选中状态 -->
+            <template x-if="!activeMessage">
+                <div class="pm-empty">
+                    <i class="fas fa-comments"></i>
+                    <span>选择一封私信查看内容</span>
+                </div>
+            </template>
+
+            <!-- 对话界面 -->
+            <template x-if="activeMessage">
+                <div style="display:flex;flex-direction:column;height:100%;">
+                    <div class="pm-chat-header">
+                    <span x-text="mailboxTitle(activeMessage)"></span>
+                        <div class="pm-chat-header-actions">
+                            <button class="outline" style="padding:0.3rem 0.7rem;font-size:0.8rem;border-radius:6px;"
+                                    x-show="mailbox === 'inbox'"
+                                    @click="blockCurrentPeer()" title="拉黑该用户">
+                                <i class="fas fa-ban"></i> 拉黑
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pm-messages" id="pm-messages-container">
+                        <div class="pm-msg-row" :class="{own: activeMessage.is_own}">
+                            <div class="pm-msg-avatar"
+                                 x-text="messageAvatar(activeMessage)">
+                            </div>
+                            <div class="pm-msg-body">
+                                <div class="pm-msg-sender" x-text="messageSenderLabel(activeMessage)"></div>
+                                <div class="pm-msg-bubble" x-text="activeMessage.content"></div>
+                                <div class="pm-msg-meta">
+                                    <span x-text="formatTime(activeMessage.created_at)"></span>
+                                    <template x-if="activeMessage.is_own && activeMessage.is_read == 1">
+                                        <span style="color:var(--primary);"><i class="fas fa-check-double"></i> 已读</span>
+                                    </template>
+                                    <button class="pm-delete-btn" @click="deleteMessage(activeMessage.id)" title="删除（仅对自己）">
+                                        <i class="fas fa-trash-alt"></i> 删除
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pm-input-area">
+                        <textarea x-model="inputText" placeholder="输入私信内容..." rows="1"
+                                  @keydown.enter.exact.prevent="sendMessage()"
+                                  @input="autoResize($event)"></textarea>
+                        <button class="pm-send-btn" @click="sendMessage()" :disabled="sending || !inputText.trim()">
+                            <i class="fas fa-paper-plane"></i> 发送
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+    </template>
+
+    <!-- 新建私信弹窗 -->
+    <template x-if="showNewMsg">
+        <div class="pm-modal-overlay" @click.self="showNewMsg=false">
+            <div class="pm-modal">
+                <h3><i class="fas fa-edit"></i> 发送私信</h3>
+                <label>接收者用户名
+                    <input type="text" x-model="newMsgReceiverName" placeholder="输入用户名，如 test2" maxlength="64">
+                </label>
+                <label>内容
+                    <textarea x-model="newMsgContent" rows="4" placeholder="输入私信内容..." maxlength="4000"></textarea>
+                </label>
+                <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem;">
+                    <button class="outline" @click="showNewMsg=false">取消</button>
+                    <button class="pm-send-btn" @click="sendNewMsg()" :disabled="sending">发送</button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- 黑名单弹窗 -->
+    <template x-if="showBlocklist">
+        <div class="pm-modal-overlay" @click.self="showBlocklist=false">
+            <div class="pm-modal">
+                <h3><i class="fas fa-ban"></i> 黑名单管理</h3>
+                <template x-if="blocklist.length === 0">
+                    <p style="color:var(--muted-color);text-align:center;">黑名单为空</p>
+                </template>
+                <template x-for="item in blocklist" :key="item.user_id">
+                    <div class="pm-blocklist-item">
+                        <span x-text="item.user_name || '未知用户'"></span>
+                        <button class="outline" style="font-size:0.8rem;padding:0.3rem 0.7rem;color:#e53e3e;border-color:#e53e3e;"
+                                @click="unblockUser(item.user_id)">
+                            <i class="fas fa-times"></i> 解除
+                        </button>
+                    </div>
+                </template>
+                <div style="text-align:right;margin-top:1rem;">
+                    <button class="outline" @click="showBlocklist=false">关闭</button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+</div>
+</div>
+</main>
+
+<div id="footer-container"></div>
+
+<script src="script/api_service.js"></script>
+<script src="script/layout.js"></script>
+<script>
+function pmApp() {
+    return {
+        loading: true,
+        hasPrivilege: false,
+        myUserId: 0,
+        myName: '',
+        mailbox: 'inbox',
+        messagesList: [],
+        activeMessage: null,
+        inputText: '',
+        sending: false,
+        showNewMsg: false,
+        newMsgReceiverName: '',
+        newMsgContent: '',
+        showBlocklist: false,
+        blocklist: [],
+
+        async init() {
+            await apiService.restoreSessionIfNeeded();
+            const userInfo = apiService.getUserInfo();
+            if (!userInfo) { apiService.redirectToLogin(); return; }
+            this.myUserId = String(userInfo.id || userInfo.user_id || '');
+            this.myName = userInfo.username || userInfo.user_name || '';
+
+            this.hasPrivilege = true;
+            await this.loadMailbox();
+            this.loading = false;
+
+            // 检查 URL 参数 peer_id（从其他页面跳转过来）
+            const params = new URLSearchParams(location.search);
+            const peerId = params.get('peer_id');
+            const peerName = params.get('peer_name') || '';
+            if (peerId) {
+                this.mailbox = 'sent';
+                await this.loadMailbox();
+                const found = this.messagesList.find(item => String(item.peer_id) === String(peerId));
+                if (found) {
+                    this.selectMessage(found);
+                } else if (peerName) {
+                    this.openNewMsg();
+                    this.newMsgReceiverName = peerName;
+                }
+            }
+        },
+
+        async loadInbox() {
+            try {
+                const r = await apiFetch('/api/v1/pm/inbox');
+                if (r.code === 200) this.messagesList = r.data || [];
+            } catch(e) {}
+        },
+
+        async loadSentbox() {
+            try {
+                const r = await apiFetch('/api/v1/pm/sent');
+                if (r.code === 200) this.messagesList = r.data || [];
+            } catch(e) {}
+        },
+
+        async loadMailbox() {
+            if (this.mailbox === 'inbox') {
+                await this.loadInbox();
+            } else {
+                await this.loadSentbox();
+            }
+            if (!this.activeMessage && this.messagesList.length > 0) {
+                await this.selectMessage(this.messagesList[0]);
+            }
+            if (this.activeMessage) {
+                const found = this.messagesList.find(x => String(x.id) === String(this.activeMessage.id));
+                this.activeMessage = found || (this.messagesList[0] || null);
+            }
+        },
+
+        async switchMailbox(type) {
+            if (this.mailbox === type) return;
+            this.mailbox = type;
+            this.activeMessage = null;
+            await this.loadMailbox();
+        },
+
+        async selectMessage(item) {
+            this.activeMessage = item;
+            if (this.mailbox === 'inbox' && item.is_read == 0) {
+                await apiFetch('/api/v1/pm/mark_read', {
+                    method: 'POST',
+                    body: JSON.stringify({ sender_id: item.sender_id })
+                });
+                item.is_read = 1;
+            }
+        },
+
+        async sendMessage() {
+            if (!this.inputText.trim() || this.sending || !this.activeMessage) return;
+            this.sending = true;
+            try {
+                const r = await apiFetch('/api/v1/pm/send', {
+                    method: 'POST',
+                    body: JSON.stringify({ receiver_name: this.replyTargetName(), content: this.inputText.trim() })
+                });
+                if (r.code === 200) {
+                    this.inputText = '';
+                    this.mailbox = 'sent';
+                    await this.loadMailbox();
+                } else {
+                    alert(r.message || '发送失败');
+                }
+            } catch(e) { alert('发送失败，请重试'); }
+            this.sending = false;
+        },
+
+        async sendNewMsg() {
+            if (!this.newMsgContent.trim() || !this.newMsgReceiverName.trim()) return;
+            this.sending = true;
+            try {
+                const r = await apiFetch('/api/v1/pm/send', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        receiver_name: this.newMsgReceiverName.trim(),
+                        content: this.newMsgContent.trim()
+                    })
+                });
+                if (r.code === 200) {
+                    this.showNewMsg = false;
+                    this.newMsgContent = '';
+                    this.newMsgReceiverName = '';
+                    this.mailbox = 'sent';
+                    await this.loadMailbox();
+                } else {
+                    alert(r.message || '发送失败');
+                }
+            } catch(e) { alert('发送失败，请重试'); }
+            this.sending = false;
+        },
+
+        async deleteMessage(msgId) {
+            if (!confirm('确定删除这条消息？（仅对自己隐藏）')) return;
+            try {
+                const r = await apiFetch(`/api/v1/pm/${msgId}`, { method: 'DELETE' });
+                if (r.code === 200) {
+                    this.messagesList = this.messagesList.filter(m => String(m.id) !== String(msgId));
+                    if (this.activeMessage && String(this.activeMessage.id) === String(msgId)) {
+                        this.activeMessage = this.messagesList[0] || null;
+                    }
+                } else {
+                    alert(r.message || '删除失败');
+                }
+            } catch(e) { alert('删除失败'); }
+        },
+
+        async blockCurrentPeer() {
+            const targetName = this.activeMessage?.sender_name || this.activeMessage?.peer_name || '';
+            if (!targetName) return;
+            if (!confirm(`确定拉黑 ${targetName}？拉黑后对方无法给你发私信。`)) return;
+            try {
+                const r = await apiFetch('/api/v1/pm/block', {
+                    method: 'POST',
+                    body: JSON.stringify({ target_user_id: this.activeMessage.sender_id })
+                });
+                alert(r.message || '操作成功');
+            } catch(e) { alert('操作失败'); }
+        },
+
+        async openBlocklist() {
+            try {
+                const r = await apiFetch('/api/v1/pm/blocklist');
+                if (r.code === 200) this.blocklist = r.data || [];
+            } catch(e) {}
+            this.showBlocklist = true;
+        },
+
+        async unblockUser(targetId) {
+            try {
+                const r = await apiFetch(`/api/v1/pm/block/${targetId}`, { method: 'DELETE' });
+                if (r.code === 200) {
+                    this.blocklist = this.blocklist.filter(x => String(x.user_id) !== String(targetId));
+                } else {
+                    alert(r.message || '操作失败');
+                }
+            } catch(e) { alert('操作失败'); }
+        },
+
+        openNewMsg() {
+            this.newMsgReceiverName = '';
+            this.newMsgContent = '';
+            this.showNewMsg = true;
+        },
+
+        scrollToBottom() {
+            this.$nextTick(() => {
+                const el = document.getElementById('pm-messages-container');
+                if (el) el.scrollTop = 0;
+            });
+        },
+
+        messageAvatar(msg) {
+            const name = msg.is_own ? this.myName : (msg.sender_name || msg.peer_name || '');
+            return name ? name[0].toUpperCase() : '?';
+        },
+
+        messageSenderLabel(msg) {
+            if (msg.is_own) return `${this.myName || '我'} 发送`;
+            return `${msg.sender_name || msg.peer_name || '未知用户'} 发送`;
+        },
+
+        mailboxPeerName(item) {
+            return this.mailbox === 'inbox' ? item.sender_name : item.receiver_name;
+        },
+
+        mailboxTitle(item) {
+            return this.mailbox === 'inbox'
+                ? `来自 ${item.sender_name || '未知用户'}`
+                : `发给 ${item.receiver_name || '未知用户'}`;
+        },
+
+        replyTargetName() {
+            if (!this.activeMessage) return '';
+            return this.mailbox === 'inbox'
+                ? (this.activeMessage.sender_name || '')
+                : (this.activeMessage.receiver_name || '');
+        },
+
+        formatTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            const now = new Date();
+            const isToday = d.toDateString() === now.toDateString();
+            if (isToday) {
+                return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            }
+            return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) + ' ' +
+                   d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        },
+
+        autoResize(e) {
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+        },
+
+        onScroll() {}
+    };
+}
+
+async function apiFetch(url, opts = {}) {
+    return apiService.request(url, opts);
+}
+</script>
+</body>
+</html>

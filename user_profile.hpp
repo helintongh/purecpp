@@ -143,33 +143,38 @@ public:
 
     // 更新数据库中的指定字段
     bool update_success = true;
-    users_t update_user;
-    std::string condition = "id=" + std::to_string(user.id);
-
     if (update_info.location.has_value()) {
-      update_user.location = update_info.location;
-      if (conn->update_some<&users_t::location>(update_user, condition) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::location), *update_info.location)
+              .where(col(&users_t::id) == user.id)
+              .execute() != 1) {
         update_success = false;
       }
     }
 
     if (update_info.bio.has_value() && update_success) {
-      update_user.bio = update_info.bio;
-      if (conn->update_some<&users_t::bio>(update_user, condition) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::bio), *update_info.bio)
+              .where(col(&users_t::id) == user.id)
+              .execute() != 1) {
         update_success = false;
       }
     }
 
     if (update_info.avatar.has_value() && update_success) {
-      update_user.avatar = update_info.avatar;
-      if (conn->update_some<&users_t::avatar>(update_user, condition) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::avatar), *update_info.avatar)
+              .where(col(&users_t::id) == user.id)
+              .execute() != 1) {
         update_success = false;
       }
     }
 
     if (update_info.skills.has_value() && update_success) {
-      update_user.skills = update_info.skills;
-      if (conn->update_some<&users_t::skills>(update_user, condition) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::skills), *update_info.skills)
+              .where(col(&users_t::id) == user.id)
+              .execute() != 1) {
         update_success = false;
       }
     }
@@ -286,12 +291,11 @@ public:
         return;
       }
 
-      users_t update_user;
-      update_user.avatar = file_url;
-
       // 更新数据库
-      if (conn->update_some<&users_t::avatar>(
-              update_user, "id=" + std::to_string(upload_req.user_id)) != 1) {
+      if (conn->update<users_t>()
+              .set(col(&users_t::avatar), file_url)
+              .where(col(&users_t::id) == upload_req.user_id)
+              .execute() != 1) {
         resp.set_status_and_content(status_type::internal_server_error,
                                     make_error("更新用户头像失败"));
         return;

@@ -198,7 +198,9 @@ public:
     }
 
     // 删除临时表中的用户数据
-    auto delete_result = conn->delete_records_s<users_tmp_t>("id = ?", user_id);
+    auto delete_result = conn->remove<users_tmp_t>()
+                             .where(col(&users_tmp_t::id) == user_id)
+                             .execute();
     if (delete_result == 0) {
       conn->rollback();
       resp.set_status_and_content(status_type::internal_server_error,

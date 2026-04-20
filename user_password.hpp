@@ -54,10 +54,10 @@ public:
 
     // 更新新密码
     std::string pwd_sha = password_encrypt(info.new_password);
-    users_t update_user;
-    update_user.pwd_hash = pwd_sha;
-    if (conn->update_some<&users_t::pwd_hash>(
-            update_user, "id=" + std::to_string(user.id)) != 1) {
+    if (conn->update<users_t>()
+            .set(col(&users_t::pwd_hash), pwd_sha)
+            .where(col(&users_t::id) == user.id)
+            .execute() != 1) {
       resp.set_status_and_content(status_type::bad_request,
                                   make_error("修改密码失败"));
       return;
@@ -113,8 +113,10 @@ public:
     reset_token.token[reset_token.token.size() - 1] = '\0';
 
     // 删除该用户之前的所有重置token
-    conn->delete_records_s<users_token_t>("user_id = ? and token_type = ?",
-                                          user.id, TokenType::RESET_PASSWORD);
+    conn->remove<users_token_t>()
+        .where(col(&users_token_t::user_id) == user.id &&
+               col(&users_token_t::token_type) == TokenType::RESET_PASSWORD)
+        .execute();
 
     // 插入新的token
     uint64_t insert_id = conn->get_insert_id_after_insert(reset_token);
@@ -190,13 +192,12 @@ public:
 
     // 更新用户密码
     std::string pwd_hash = purecpp::password_encrypt(info.new_password);
-    users_t update_user;
-    update_user.pwd_hash = pwd_hash;
-    update_user.login_attempts = 0;
-    update_user.last_failed_login = 0;
-    if (conn->update_some<&users_t::pwd_hash, &users_t::login_attempts,
-                          &users_t::last_failed_login>(
-            update_user, "id=" + std::to_string(user.id)) != 1) {
+    if (conn->update<users_t>()
+            .set(col(&users_t::pwd_hash), pwd_hash)
+            .set(col(&users_t::login_attempts), 0)
+            .set(col(&users_t::last_failed_login), 0)
+            .where(col(&users_t::id) == user.id)
+            .execute() != 1) {
       auto err = conn->get_last_error();
       CINATRA_LOG_ERROR << err;
       resp.set_status_and_content(status_type::internal_server_error,
@@ -204,8 +205,10 @@ public:
       return;
     }
     // 删除该用户之前的所有重置token
-    conn->delete_records_s<users_token_t>("user_id = ? and token_type = ?",
-                                          user.id, TokenType::RESET_PASSWORD);
+    conn->remove<users_token_t>()
+        .where(col(&users_token_t::user_id) == user.id &&
+               col(&users_token_t::token_type) == TokenType::RESET_PASSWORD)
+        .execute();
 
     // 返回成功响应
     std::string json = make_success("密码重置成功");

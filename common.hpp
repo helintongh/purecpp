@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <iomanip>
+#include <sstream>
 #include <string_view>
 
 #include "config.hpp"
@@ -366,19 +368,20 @@ inline uint64_t generate_user_id() {
   char time_buf[20];
   std::strftime(time_buf, sizeof(time_buf), "%Y%m%d%H%M%S", &tm_now);
 
-  // 获取纳秒部分
+  // 获取毫秒部分
   auto duration = now.time_since_epoch();
   auto millisenconds =
       std::chrono::duration_cast<std::chrono::milliseconds>(duration);
   auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
 
-  // 格式化为6位纳秒，确保只输出6位
-  char mill_buf[10];
-  std::snprintf(mill_buf, sizeof(mill_buf), "%03ld",
-                std::abs(millisenconds.count() - seconds.count() * 1000));
+  // 格式化为3位毫秒，避免 snprintf 整数格式符的跨平台差异。
+  auto mill_part = millisenconds - seconds;
+  std::ostringstream mill_buf;
+  mill_buf << std::setw(3) << std::setfill('0') << mill_part.count();
+
   // 组合时间和纳秒部分
   std::string id = time_buf;
-  id += mill_buf;
+  id += mill_buf.str();
 
   return std::stoull(id);
 }

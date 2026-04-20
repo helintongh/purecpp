@@ -4,6 +4,9 @@
 #include "common.hpp"
 #include "user_aspects.hpp"
 
+#include <iguana/xml_writer.hpp>
+
+#include <map>
 #include <random>
 
 using namespace cinatra;
@@ -94,6 +97,44 @@ struct article_delete_request {
 struct article_toggle_featured_request {
   std::string slug;
 };
+
+struct rss_item {
+  std::string title;
+  std::string link;
+  std::string description;
+  std::string author;
+  std::string pubDate;
+  std::string guid;
+};
+YLT_REFL(rss_item, title, link, description, author, pubDate, guid);
+
+struct rss_channel {
+  std::string title;
+  std::string link;
+  std::string description;
+  std::string language;
+  std::string lastBuildDate;
+  std::vector<rss_item> item;
+};
+YLT_REFL(rss_channel, title, link, description, language, lastBuildDate, item);
+
+struct rss_feed {
+  rss_channel channel;
+};
+YLT_REFL(rss_feed, channel);
+
+inline constexpr std::string_view get_alias_struct_name(rss_feed *) {
+  return "rss";
+}
+
+struct rss_article_row {
+  std::string title;
+  std::string abstraction;
+  std::string slug;
+  std::string user_name;
+  uint64_t created_at;
+};
+YLT_REFL(rss_article_row, title, abstraction, slug, user_name, created_at);
 
 inline void generate_random_string(auto &random_str) {
   static const std::string chars = "abcdefghijklmnopqrstuvwxyz"
@@ -1142,6 +1183,68 @@ public:
       return;
     }
     resp.set_status_and_content(status_type::ok, std::move(json));
+  }
+
+  void get_rss_feed(coro_http_request &req, coro_http_response &resp) {
+    auto conn = get_db_pool().get();
+    if (conn == nullptr) {
+      set_server_internel_error(resp);
+      return;
+    }
+
+    // ormpp maps selected columns to the target type positionally,
+    // so RSS uses a dedicated 5-field projection instead of article_list.
+    auto articles_list =
+        conn->select(col(&articles_t::title), col(&articles_t::abstraction),
+                     col(&articles_t::slug), col(&users_t::user_name),
+                     col(&articles_t::created_at))
+            .from<articles_t>()
+            .inner_join(col(&articles_t::author_id), col(&users_t::id))
+            .where(col(&articles_t::is_deleted) == 0 &&
+                   col(&articles_t::status) == std::string(PUBLISHED))
+            .order_by(col(&articles_t::created_at).desc())
+            .limit(20)
+            .collect<rss_article_row>();
+
+    auto base_url = get_base_url(req);
+    auto site_link = make_absolute_url(base_url, "/");
+
+    rss_feed feed{};
+    feed.channel.title = "PureCpp";
+    feed.channel.link = site_link;
+    feed.channel.description = "PureCpp 最新技术文章订阅";
+    feed.channel.language = "zh-cn";
+    feed.channel.lastBuildDate =
+        format_rss_pub_date(get_timestamp_milliseconds());
+    feed.channel.item.reserve(articles_list.size());
+
+    for (const auto &article : articles_list) {
+      rss_item item{};
+      item.title = article.title;
+      item.link = make_absolute_url(
+          base_url, "/article.html?slug=" + article.slug);
+      item.description = article.abstraction;
+      item.author = article.user_name;
+      item.pubDate = format_rss_pub_date(article.created_at);
+      item.guid = item.link;
+      feed.channel.item.emplace_back(std::move(item));
+    }
+
+    iguana::xml_attr_t<rss_feed, std::map<std::string, std::string>> xml_feed;
+    xml_feed.attr()["version"] = "2.0";
+    xml_feed.value() = std::move(feed);
+
+    std::string xml;
+    try {
+      iguana::to_xml<true>(xml_feed, xml);
+    } catch (const std::exception &e) {
+      CINATRA_LOG_ERROR << "generate rss feed failed: " << e.what();
+      set_server_internel_error(resp);
+      return;
+    }
+
+    resp.add_header("Content-Type", "application/rss+xml; charset=utf-8");
+    resp.set_status_and_content(status_type::ok, std::move(xml));
   }
 };
 } // namespace purecpp

@@ -401,6 +401,9 @@ int main() {
   server.set_http_handler<POST>("/api/v1/get_articles", &articles::get_articles,
                                 article, log_request_response{});
 
+  server.set_http_handler<GET>("/rss.xml", &articles::get_rss_feed, article,
+                               log_request_response{});
+
   server.set_http_handler<GET>("/api/v1/article/:slug", &articles::show_article,
                                article, log_request_response{});
   server.set_http_handler<POST>("/api/v1/edit_article", &articles::edit_article,

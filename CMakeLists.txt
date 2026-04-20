@@ -27,6 +27,10 @@ set(PURECPP_TARGET_DEFINITIONS
     CINATRA_ENABLE_SSL
 )
 
+if(WIN32)
+    list(APPEND PURECPP_TARGET_DEFINITIONS WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+
 if(PURECPP_DB_BACKEND_NORMALIZED STREQUAL "sqlite")
     add_library(ormpp_sqlite3 STATIC ${PURECPP_SQLITE_DIR}/sqlite3.c)
     target_include_directories(ormpp_sqlite3 PUBLIC ${PURECPP_SQLITE_DIR})

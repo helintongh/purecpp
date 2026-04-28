@@ -168,6 +168,8 @@
     <script src="script/cpp.min.js"></script>
 
     <script src="script/marked.min.js"></script>
+    <script src="script/mathjax-config.js"></script>
+    <script defer src="script/mathjax/tex-mml-chtml.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async function () {
             // --- 1. 配置 marked.js 以使用 Highlight.js ---
@@ -267,7 +269,9 @@
 
                         // 覆盖默认的预览渲染函数
                         previewRender: function (plainText, preview) {
-                            return marked.parse(plainText);
+                            const html = marked.parse(plainText);
+                            setTimeout(() => window.renderMathInElement(preview), 0);
+                            return html;
                         },
                     });
 

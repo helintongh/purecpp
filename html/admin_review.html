@@ -17,6 +17,8 @@
     <script src="script/highlight.min.js"></script>
     <script src="script/cpp.min.js"></script>
     <script src="script/marked.min.js"></script>
+    <script src="script/mathjax-config.js"></script>
+    <script defer src="script/mathjax/tex-mml-chtml.js"></script>
     <script defer src="script/alpine.js"></script>
 
     <style>
@@ -460,6 +462,7 @@
                     <!-- 内容区域 -->
                     <div x-show="expanded" x-cloak class="content-preview markdown-body"
                          x-html="renderMarkdown(article.content)"
+                         x-effect="expanded && $nextTick(() => window.renderMathInElement($el))"
                          style="margin-bottom: 0; padding: 1rem; border-top: 1px solid var(--muted-border-color);">
                     </div>
 

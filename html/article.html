@@ -18,6 +18,8 @@
     <script src="script/highlight.min.js"></script>
     <script src="script/cpp.min.js"></script>
     <script src="script/marked.min.js"></script>
+    <script src="script/mathjax-config.js"></script>
+    <script defer src="script/mathjax/tex-mml-chtml.js"></script>
     <script defer src="script/alpine.js"></script>
 
     <style>
@@ -270,7 +272,8 @@
                                       x-text="comment.author_name"></span>
                             </div>
                             <div class="comment-content" style="margin-bottom: 0.5rem; line-height: 1.5;"
-                                 x-html="isQA ? marked.parse(comment.content || '') : comment.content"></div>
+                                 x-html="isQA ? marked.parse(comment.content || '') : comment.content"
+                                 x-effect="isQA && $nextTick(() => window.renderMathInElement($el))"></div>
                             <div class="comment-footer"
                                  style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                                 <div style="display: flex; gap: 1rem; font-size: 0.8rem; color: var(--muted-color);">
@@ -325,7 +328,8 @@
 
                                         <div class="comment-content"
                                              style="margin-bottom: 0.3rem; line-height: 1.4; font-size: 0.9rem;"
-                                             x-html="isQA ? marked.parse(child.content || '') : child.content"></div>
+                                             x-html="isQA ? marked.parse(child.content || '') : child.content"
+                                             x-effect="isQA && $nextTick(() => window.renderMathInElement($el))"></div>
 
                                         <div class="comment-footer"
                                              style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
@@ -713,7 +717,10 @@
                     contentEl.innerHTML = html;
 
                     // 替换原有 hljs.highlightAll() 为精准高亮
-                    setTimeout(() => this.highlightCodeBlocks(), 50);
+                    setTimeout(() => {
+                        this.highlightCodeBlocks();
+                        window.renderMathInElement(contentEl);
+                    }, 50);
                 },
 
                 async fetchArticle() {
@@ -844,8 +851,10 @@
                     this.simplemde = new SimpleMDE({
                         element: document.getElementById("markdown-editor"),
                         spellChecker: false,
-                        previewRender: function (plainText) {
-                            return marked.parse(plainText);
+                        previewRender: function (plainText, preview) {
+                            const html = marked.parse(plainText);
+                            setTimeout(() => window.renderMathInElement(preview), 0);
+                            return html;
                         },
                     });
                     this.simplemde.codemirror.on("change", () => {
@@ -863,8 +872,10 @@
                     this.commentSimplemde = new SimpleMDE({
                         element: el,
                         spellChecker: false,
-                        previewRender: function (plainText) {
-                            return marked.parse(plainText);
+                        previewRender: function (plainText, preview) {
+                            const html = marked.parse(plainText);
+                            setTimeout(() => window.renderMathInElement(preview), 0);
+                            return html;
                         },
                     });
                     this.commentSimplemde.codemirror.on("change", () => {

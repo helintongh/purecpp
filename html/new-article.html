@@ -168,6 +168,7 @@
     <script src="script/cpp.min.js"></script>
 
     <script src="script/marked.min.js"></script>
+    <script src="script/purify.min.js"></script>
     <script src="script/mathjax-config.js"></script>
     <script defer src="script/mathjax/tex-mml-chtml.js"></script>
     <script>
@@ -269,9 +270,7 @@
 
                         // 覆盖默认的预览渲染函数
                         previewRender: function (plainText, preview) {
-                            const html = marked.parse(plainText);
-                            setTimeout(() => window.renderMathInElement(preview), 0);
-                            return html;
+                            return window.renderMarkdownPreview(plainText, preview);
                         },
                     });
 

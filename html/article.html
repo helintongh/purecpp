@@ -18,6 +18,7 @@
     <script src="script/highlight.min.js"></script>
     <script src="script/cpp.min.js"></script>
     <script src="script/marked.min.js"></script>
+    <script src="script/purify.min.js"></script>
     <script src="script/mathjax-config.js"></script>
     <script defer src="script/mathjax/tex-mml-chtml.js"></script>
     <script defer src="script/alpine.js"></script>
@@ -272,8 +273,8 @@
                                       x-text="comment.author_name"></span>
                             </div>
                             <div class="comment-content" style="margin-bottom: 0.5rem; line-height: 1.5;"
-                                 x-html="isQA ? marked.parse(comment.content || '') : comment.content"
-                                 x-effect="isQA && $nextTick(() => window.renderMathInElement($el))"></div>
+                                 x-html="isQA ? window.renderMarkdown(comment.content || '') : window.sanitizeHtml(comment.content)"
+                                 x-effect="isQA && $nextTick(() => window.renderMathInElement($el, { key: window.getRenderKey(comment.comment_id + ':' + (comment.content || '')) }))"></div>
                             <div class="comment-footer"
                                  style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                                 <div style="display: flex; gap: 1rem; font-size: 0.8rem; color: var(--muted-color);">
@@ -328,8 +329,8 @@
 
                                         <div class="comment-content"
                                              style="margin-bottom: 0.3rem; line-height: 1.4; font-size: 0.9rem;"
-                                             x-html="isQA ? marked.parse(child.content || '') : child.content"
-                                             x-effect="isQA && $nextTick(() => window.renderMathInElement($el))"></div>
+                                             x-html="isQA ? window.renderMarkdown(child.content || '') : window.sanitizeHtml(child.content)"
+                                             x-effect="isQA && $nextTick(() => window.renderMathInElement($el, { key: window.getRenderKey(child.comment_id + ':' + (child.content || '')) }))"></div>
 
                                         <div class="comment-footer"
                                              style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
@@ -712,15 +713,9 @@
                     if (!contentEl || !content) return;
 
                     const unescaped = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-                    const html = marked.parse(unescaped);
-
-                    contentEl.innerHTML = html;
-
-                    // 替换原有 hljs.highlightAll() 为精准高亮
-                    setTimeout(() => {
-                        this.highlightCodeBlocks();
-                        window.renderMathInElement(contentEl);
-                    }, 50);
+                    window.renderMarkdownAndMath(contentEl, unescaped, {
+                        afterRender: () => this.highlightCodeBlocks()
+                    });
                 },
 
                 async fetchArticle() {
@@ -852,9 +847,7 @@
                         element: document.getElementById("markdown-editor"),
                         spellChecker: false,
                         previewRender: function (plainText, preview) {
-                            const html = marked.parse(plainText);
-                            setTimeout(() => window.renderMathInElement(preview), 0);
-                            return html;
+                            return window.renderMarkdownPreview(plainText, preview);
                         },
                     });
                     this.simplemde.codemirror.on("change", () => {
@@ -873,9 +866,7 @@
                         element: el,
                         spellChecker: false,
                         previewRender: function (plainText, preview) {
-                            const html = marked.parse(plainText);
-                            setTimeout(() => window.renderMathInElement(preview), 0);
-                            return html;
+                            return window.renderMarkdownPreview(plainText, preview);
                         },
                     });
                     this.commentSimplemde.codemirror.on("change", () => {
